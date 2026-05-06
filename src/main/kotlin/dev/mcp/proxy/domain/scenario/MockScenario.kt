@@ -13,11 +13,14 @@ data class MockScenario(
 data class MockRule(
     val method: String,
     val path: String,
+    val mode: MockRuleMode = MockRuleMode.Mock,
+    val sequence: Int? = null,
+    val requestBodyContains: List<String> = emptyList(),
     val status: Int = SUCCESS_STATUS,
     val delayMillis: Long = NO_DELAY_MILLIS,
     val timeoutMillis: Long? = null,
     val bodyMode: MockRuleBodyMode = MockRuleBodyMode.Fixture,
-    val fixture: String,
+    val fixture: String? = null,
 ) {
     val responseDelayMillis: Long
         get() = timeoutMillis ?: delayMillis
@@ -26,6 +29,22 @@ data class MockRule(
         const val SUCCESS_STATUS = 200
         const val NO_DELAY_MILLIS = 0L
     }
+}
+
+@Serializable
+enum class MockRuleMode {
+    @SerialName("mock")
+    Mock,
+
+    @SerialName("forbidden")
+    Forbidden,
+    ;
+
+    val scenarioValue: String
+        get() = when (this) {
+            Mock -> "mock"
+            Forbidden -> "forbidden"
+        }
 }
 
 @Serializable

@@ -15,6 +15,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import dev.mcp.proxy.domain.ProxyPort
@@ -22,6 +23,7 @@ import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.UpstreamProxyUrl
 import dev.mcp.proxy.domain.scenario.MockRule
 import dev.mcp.proxy.domain.scenario.MockRuleBodyMode
+import dev.mcp.proxy.domain.scenario.MockRuleMode
 import dev.mcp.proxy.domain.scenario.MockScenario
 import dev.mcp.proxy.domain.scenario.ScenarioRepository
 import dev.mcp.proxy.infrastructure.ca.LocalCaManager
@@ -149,8 +151,10 @@ class MitmMockProxyServer(
         private val mirrorResponses = ConcurrentHashMap<String, ByteArray>()
         private val adminHtml = ProxyAdminHtml(json)
         private val stateStoreReader = StateStoreAdminReader()
+        private val requestState = AtomicReference(ScenarioRequestState())
 
         fun activateScenario(settings: ActiveScenarioSettings) {
+            requestState.set(ScenarioRequestState())
             activeScenario.update(settings)
         }
 
@@ -159,6 +163,7 @@ class MitmMockProxyServer(
         }
 
         fun deactivateScenario() {
+            requestState.set(ScenarioRequestState())
             activeScenario.clear()
         }
 
@@ -303,13 +308,15 @@ class MitmMockProxyServer(
         ): Response? {
             if (scenarioSettings == null) return null
             val rules = scenarioSettings.rules()
-            val rule = rules.firstOrNull { it.method == ruleKey.method && pathMatches(it.path, ruleKey.path) }?.rule ?: return null
+            val rule = requestState.get().selectRule(ruleKey, rules, requestBody) ?: return null
             val body = responseBody(rule)
+            val mode = rule.mode.scenarioValue
+            val status = rule.effectiveStatus()
             journalRequest(
                 request = request,
                 ruleKey = ruleKey,
-                mode = MOCK_MODE,
-                status = rule.status,
+                mode = mode,
+                status = status,
                 fixture = rule.fixture,
                 requestBody = requestBody,
                 responseBody = body,
@@ -318,9 +325,9 @@ class MitmMockProxyServer(
                 timeoutMillis = rule.timeoutMillis,
                 effectiveDelayMillis = rule.responseDelayMillis,
             )
-            mirrorIfNeeded(request, ruleKey, rule.status, rule.fixture, requestBody, body, scenarioSettings, traffic)
+            mirrorIfNeeded(request, ruleKey, mode, status, rule.fixture, requestBody, body, scenarioSettings, traffic)
             if (rule.responseDelayMillis > 0) Thread.sleep(rule.responseDelayMillis)
-            return jsonResponse(request, rule.status, body, rule.bodyMode)
+            return jsonResponse(request, status, body, rule.bodyMode)
         }
 
         private fun handlePassthrough(
@@ -351,6 +358,7 @@ class MitmMockProxyServer(
         private fun mirrorIfNeeded(
             request: Request,
             ruleKey: RuleKey,
+            mode: String,
             status: Int,
             fixture: String?,
             requestBody: String,
@@ -368,7 +376,7 @@ class MitmMockProxyServer(
                 MIRROR_ID_HEADER to mirrorId,
                 "x-proxy-original-url" to request.uri.toString(),
                 "x-proxy-scenario" to (scenarioSettings?.scenario?.name ?: PASSTHROUGH_SCENARIO),
-                "x-proxy-mode" to MOCK_MODE,
+                "x-proxy-mode" to mode,
                 "x-proxy-status" to status.toString(),
                 "x-proxy-fixture" to fixture.orEmpty(),
                 "x-proxy-response-bytes" to responseBody.size.toString(),
@@ -423,12 +431,35 @@ class MitmMockProxyServer(
         }
 
         private fun responseBody(rule: MockRule): ByteArray {
+            if (rule.mode == MockRuleMode.Forbidden) {
+                return buildForbiddenResponse(rule).toByteArray()
+            }
             return when (rule.bodyMode) {
                 MockRuleBodyMode.Fixture -> scenarioRepository.loadFixture(rule).toByteArray()
                 MockRuleBodyMode.Empty,
                 MockRuleBodyMode.ConnectionClose,
                 -> ByteArray(0)
             }
+        }
+
+        private fun MockRule.effectiveStatus(): Int {
+            return if (mode == MockRuleMode.Forbidden && status == MockRule.SUCCESS_STATUS) {
+                FORBIDDEN_RULE_STATUS
+            } else {
+                status
+            }
+        }
+
+        private fun buildForbiddenResponse(rule: MockRule): String {
+            return json.encodeToString(
+                ForbiddenRuleResponse.serializer(),
+                ForbiddenRuleResponse(
+                    error = "forbidden_proxy_rule",
+                    method = rule.method.uppercase(),
+                    path = normalizeProxyPath(rule.path),
+                    message = "Request matched a forbidden scenario rule",
+                ),
+            )
         }
 
         private fun journalRequest(
@@ -498,9 +529,9 @@ class MitmMockProxyServer(
     private companion object {
         const val BIND_HOST = "0.0.0.0"
         const val ROOT_CA_KEY_FILE = "mcp-proxy-root-ca.key"
-        const val MOCK_MODE = "mock"
         const val PASSTHROUGH_MODE = "passthrough"
         const val PASSTHROUGH_SCENARIO = "passthrough"
+        const val FORBIDDEN_RULE_STATUS = 599
         const val MIRROR_PATH = "/__proxy_mirror"
         const val MIRROR_ID_HEADER = "x-proxy-mirror-id"
         const val DEFAULT_ADMIN_LIMIT = 50

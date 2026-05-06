@@ -61,6 +61,12 @@ A rule maps method and path to a fixture:
 
 Rules support `status`, `delayMillis`, `timeoutMillis` and `bodyMode` (`fixture`, `empty`, `connectionClose`).
 
+Advanced rules also support:
+
+- `mode: "forbidden"` to fail matching requests explicitly with a diagnostic JSON body;
+- `sequence` to return different rules for the same method/path across repeated requests;
+- `requestBodyContains` to match a rule only when all configured fragments are present in the request body.
+
 ## State Store
 
 State store is generic. Each key is stored as `var/state/kv/<key>.json`. Use it for manual scenario setup or small cross-request values. Domain-specific mutations belong in explicit project extensions, not in the base proxy.

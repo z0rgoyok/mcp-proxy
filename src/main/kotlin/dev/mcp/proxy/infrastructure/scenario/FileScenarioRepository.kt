@@ -41,12 +41,15 @@ class FileScenarioRepository(
     }
 
     override fun loadFixture(rule: MockRule): String {
+        val fixture = requireNotNull(rule.fixture) {
+            "Fixture is required for rule ${rule.method} ${rule.path}"
+        }
         val fixtureFile = rootDirectory
             .resolve(FIXTURES_DIRECTORY)
-            .resolve(rule.fixture)
+            .resolve(fixture)
             .normalize()
         check(fixtureFile.startsWith(rootDirectory.resolve(FIXTURES_DIRECTORY).normalize())) {
-            "Fixture path escapes fixtures directory: ${rule.fixture}"
+            "Fixture path escapes fixtures directory: $fixture"
         }
         check(Files.exists(fixtureFile)) {
             "Fixture file not found: $fixtureFile"

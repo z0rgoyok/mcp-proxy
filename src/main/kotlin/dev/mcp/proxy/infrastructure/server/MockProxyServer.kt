@@ -34,6 +34,7 @@ import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.scenario.MockRule
 import dev.mcp.proxy.domain.scenario.MockRuleBodyMode
+import dev.mcp.proxy.domain.scenario.MockRuleMode
 import dev.mcp.proxy.domain.scenario.MockScenario
 import dev.mcp.proxy.domain.scenario.ScenarioRepository
 import dev.mcp.proxy.infrastructure.logging.ProxyEventLogger
@@ -59,6 +60,7 @@ class MockProxyServer(
         val journalFile = requestJournal.journalFile(stateDirectory)
         Files.createDirectories(journalFile.parent)
         val rules = scenario.rules.map { RuleEntry(it.method.uppercase(), normalizeProxyPath(it.path), it) }
+        val requestState = ScenarioRequestState()
         val server = embeddedServer(factory = Netty, host = BIND_HOST, port = proxyPort.value) {
             routing {
                 get(ProxyAdminApi.ADMIN_BASE_PATH) { adminApi.respondDashboard(call, stateDirectory, proxyPort.value) }
@@ -84,7 +86,7 @@ class MockProxyServer(
                     return@intercept
                 }
                 val requestBody = call.receiveText()
-                handleFixture(this, ruleKey, rules, scenario, stateDirectory, journalFile, requestBody)
+                handleFixture(this, ruleKey, rules, requestState, scenario, stateDirectory, journalFile, requestBody)
                     ?: handlePassthrough(this, ruleKey, upstreamBaseUrl, scenario, stateDirectory, journalFile, requestBody)
             }
         }.start(wait = false)
@@ -127,18 +129,20 @@ class MockProxyServer(
         context: PipelineContext<Unit, PipelineCall>,
         ruleKey: RuleKey,
         rules: List<RuleEntry>,
+        requestState: ScenarioRequestState,
         scenario: MockScenario,
         stateDirectory: Path,
         journalFile: Path,
         requestBody: String,
     ): Unit? {
-        val rule = rules.firstOrNull { it.method == ruleKey.method && pathMatches(it.path, ruleKey.path) }?.rule ?: return null
-        val status = HttpStatusCode.fromValue(rule.status)
+        val rule = requestState.selectRule(ruleKey, rules, requestBody) ?: return null
+        val status = HttpStatusCode.fromValue(rule.effectiveStatus())
         val responseBody = responseBody(rule)
+        val mode = rule.mode.scenarioValue
         context.journalRequest(
             ruleKey = ruleKey,
             scenario = scenario.name,
-            mode = MOCK_MODE,
+            mode = mode,
             status = status.value,
             fixture = rule.fixture,
             requestBody = requestBody,
@@ -247,12 +251,35 @@ class MockProxyServer(
     }
 
     private fun responseBody(rule: MockRule): ByteArray {
+        if (rule.mode == MockRuleMode.Forbidden) {
+            return buildForbiddenResponse(rule).toByteArray()
+        }
         return when (rule.bodyMode) {
             MockRuleBodyMode.Fixture -> scenarioRepository.loadFixture(rule).toByteArray()
             MockRuleBodyMode.Empty,
             MockRuleBodyMode.ConnectionClose,
             -> ByteArray(0)
         }
+    }
+
+    private fun MockRule.effectiveStatus(): Int {
+        return if (mode == MockRuleMode.Forbidden && status == MockRule.SUCCESS_STATUS) {
+            FORBIDDEN_RULE_STATUS
+        } else {
+            status
+        }
+    }
+
+    private fun buildForbiddenResponse(rule: MockRule): String {
+        return json.encodeToString(
+            ForbiddenRuleResponse.serializer(),
+            ForbiddenRuleResponse(
+                error = "forbidden_proxy_rule",
+                method = rule.method.uppercase(),
+                path = normalizeProxyPath(rule.path),
+                message = "Request matched a forbidden scenario rule",
+            ),
+        )
     }
 
     private suspend fun PipelineContext<Unit, PipelineCall>.respondRuleResponse(
@@ -303,8 +330,8 @@ class MockProxyServer(
     companion object {
         private const val BIND_HOST = "0.0.0.0"
         private const val DEFAULT_ADMIN_LIMIT = 50
-        private const val MOCK_MODE = "mock"
         private const val PASSTHROUGH_MODE = "passthrough"
+        private const val FORBIDDEN_RULE_STATUS = 599
         private const val CONNECT_METHOD = "CONNECT"
         private const val CONNECT_UNSUPPORTED_MODE = "https_connect_unsupported"
     }

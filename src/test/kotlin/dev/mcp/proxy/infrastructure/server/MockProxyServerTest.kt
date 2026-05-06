@@ -44,6 +44,7 @@ import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.UpstreamProxyUrl
 import dev.mcp.proxy.domain.scenario.MockRule
 import dev.mcp.proxy.domain.scenario.MockRuleBodyMode
+import dev.mcp.proxy.domain.scenario.MockRuleMode
 import dev.mcp.proxy.domain.scenario.MockScenario
 import dev.mcp.proxy.domain.scenario.ScenarioRepository
 import dev.mcp.proxy.infrastructure.logging.ProxyLogEvent
@@ -194,6 +195,103 @@ class MockProxyServerTest {
             val closeLog = assertIs<ProxyLogEvent.RequestHandled>(eventLogger.events.last())
             assertEquals("connectionClose", closeLog.bodyMode)
             assertEquals(null, closeLog.responseBodyFile)
+        } finally {
+            server.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
+    }
+
+    @Test
+    fun `mock rule can select fixture by request sequence and body fragment`() = runTest {
+        val port = freePort()
+        val stateDirectory = createTempDirectory()
+        val server = MockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(
+                fixtures = mapOf(
+                    "base.json" to """{"state":"base"}""",
+                    "promo.json" to """{"state":"promo"}""",
+                    "pickup.json" to """{"state":"pickup"}""",
+                ),
+            ),
+            eventLogger = RecordingProxyEventLogger(),
+            clock = { fixedTime },
+        ).start(
+            scenario = MockScenario(
+                name = "demo",
+                rules = listOf(
+                    MockRule(
+                        method = "POST",
+                        path = "/v1/order/delivery/calc/combined",
+                        sequence = 1,
+                        requestBodyContains = listOf("courier"),
+                        fixture = "base.json",
+                    ),
+                    MockRule(
+                        method = "POST",
+                        path = "/v1/order/delivery/calc/combined",
+                        sequence = 2,
+                        requestBodyContains = listOf("courier"),
+                        fixture = "promo.json",
+                    ),
+                    MockRule(
+                        method = "POST",
+                        path = "/v1/order/delivery/calc/combined",
+                        requestBodyContains = listOf("pickup"),
+                        fixture = "pickup.json",
+                    ),
+                ),
+            ),
+            proxyPort = ProxyPort(port),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:${freePort()}"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val base = post("http://127.0.0.1:$port/v1/order/delivery/calc/combined", """{"deliveryType":"courier"}""")
+            val promo = post("http://127.0.0.1:$port/v1/order/delivery/calc/combined", """{"deliveryType":"courier"}""")
+            val pickup = post("http://127.0.0.1:$port/v1/order/delivery/calc/combined", """{"deliveryType":"pickup"}""")
+
+            assertEquals("""{"state":"base"}""", base.body())
+            assertEquals("""{"state":"promo"}""", promo.body())
+            assertEquals("""{"state":"pickup"}""", pickup.body())
+        } finally {
+            server.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
+    }
+
+    @Test
+    fun `forbidden rule returns explicit failure and writes forbidden mode to journal`() = runTest {
+        val port = freePort()
+        val stateDirectory = createTempDirectory()
+        val eventLogger = RecordingProxyEventLogger()
+        val server = MockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+            eventLogger = eventLogger,
+            clock = { fixedTime },
+        ).start(
+            scenario = MockScenario(
+                name = "demo",
+                rules = listOf(
+                    MockRule(
+                        method = "POST",
+                        path = "/v1/order/delivery/calc/courier",
+                        mode = MockRuleMode.Forbidden,
+                    ),
+                ),
+            ),
+            proxyPort = ProxyPort(port),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:${freePort()}"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val response = post("http://127.0.0.1:$port/v1/order/delivery/calc/courier")
+
+            assertEquals(599, response.statusCode())
+            assertContains(response.body(), "forbidden_proxy_rule")
+            assertContains(stateDirectory.resolve("journal/events.jsonl").toFile().readText(), """"mode":"forbidden"""")
+            val requestLog = assertIs<ProxyLogEvent.RequestHandled>(eventLogger.events.last())
+            assertEquals("forbidden", requestLog.mode)
+            assertEquals(599, requestLog.status)
         } finally {
             server.stop(gracePeriodMillis = 0, timeoutMillis = 0)
         }
@@ -541,8 +639,15 @@ class MockProxyServerTest {
     }
 
     private fun post(url: String): HttpResponse<String> {
+        return post(url, """{"status":"app"}""")
+    }
+
+    private fun post(
+        url: String,
+        body: String,
+    ): HttpResponse<String> {
         val request = HttpRequest.newBuilder(URI.create(url))
-            .POST(HttpRequest.BodyPublishers.ofString("""{"status":"app"}"""))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
             .header("Content-Type", "application/json")
             .build()
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
@@ -611,7 +716,7 @@ class MockProxyServerTest {
         }
 
         override fun loadFixture(rule: MockRule): String {
-            return fixtures.getValue(rule.fixture)
+            return fixtures.getValue(requireNotNull(rule.fixture))
         }
     }
 
