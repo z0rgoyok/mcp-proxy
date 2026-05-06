@@ -1,0 +1,23 @@
+[versions]
+kotlin = "2.2.0"
+ktor = "3.2.3"
+coroutines = "1.10.2"
+serialization = "1.9.0"
+mcp = "0.11.1"
+mitm-proxy = "0.1.0"
+okhttp = "4.12.0"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+mcp-kotlin-sdk-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcp" }
+mitm-proxy = { module = "io.github.c-fraser:mitm-proxy", version.ref = "mitm-proxy" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }

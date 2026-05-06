@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Generic Proxy Admin</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+  </head>
+  <body>
+    <header>
+      <div class="headline">
+        <div>
+          <h1>Generic Proxy Admin</h1>
+          <div class="meta">Текущий runtime (состояние запуска), сценарии, state store (хранилище состояния) и последние journal events (события журнала) на одном экране.</div>
+        </div>
+        <div class="toolbar">
+          <button id="refreshButton" type="button">Refresh</button>
+          <span id="refreshStatus" class="refresh-status">never refreshed</span>
+          <label class="muted"><input id="autoRefresh" type="checkbox" checked> auto refresh 3s</label>
+        </div>
+      </div>
+    </header>
+    <section class="grid">
+      <div class="panel span-4">
+        <h2>Runtime</h2>
+        <div class="runtime-status">
+          <div id="runtimePill" class="pill">loading</div>
+        </div>
+        <div class="stats" id="runtimeStats"></div>
+      </div>
+      <div class="panel span-8">
+        <h2>Scenarios</h2>
+        <div id="scenarioList" class="scenario-list"></div>
+      </div>
+      <div class="panel span-5">
+        <h2>State Store</h2>
+        <pre id="stateStore">loading</pre>
+      </div>
+      <div class="panel span-7">
+        <h2>Recent Activity</h2>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-time">Time</th>
+                <th class="col-mode">Mode</th>
+                <th class="col-request">Request</th>
+                <th class="col-status">Status</th>
+                <th class="col-fixture">Fixture</th>
+                <th class="col-network">Network</th>
+                <th class="col-bodies">Bodies</th>
+              </tr>
+            </thead>
+            <tbody id="journalRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <script>
+      window.__MCP_PROXY_INITIAL_STATUS__ = {{INITIAL_STATUS_JSON}};
+    </script>
+    <script src="/admin/assets/admin.js"></script>
+  </body>
+</html>

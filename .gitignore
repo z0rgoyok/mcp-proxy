@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+
+# Gradle / Kotlin
+.gradle/
+.kotlin/
+build/
+out/
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+local.properties
+
+# Runtime state
+var/*
+!var/.gitkeep
+
+# Temporary work
+tmp/
+tmp-*/
+*.log

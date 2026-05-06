@@ -1,0 +1,32 @@
+services:
+  mcp-proxy:
+    build:
+      context: .
+    image: mcp-proxy:local
+    command:
+      - mcp
+      - --host
+      - 0.0.0.0
+      - --port
+      - "18082"
+    environment:
+      MCP_PROXY_UPSTREAM_PROXY_ENABLED: "${MCP_PROXY_UPSTREAM_PROXY_ENABLED:-false}"
+      MCP_PROXY_UPSTREAM_PROXY_URL: "${MCP_PROXY_UPSTREAM_PROXY_URL:-}"
+      MCP_PROXY_MIRROR_MOCK_REQUESTS: "${MCP_PROXY_MIRROR_MOCK_REQUESTS:-false}"
+      MCP_PROXY_MIRROR_BASE_URL: "${MCP_PROXY_MIRROR_BASE_URL:-}"
+    ports:
+      - "127.0.0.1:18082:18082"
+      - "127.0.0.1:18081:18081"
+    volumes:
+      - mcp-proxy-var:/app/var
+      - ./scenarios:/app/scenarios:ro
+      - ./fixtures:/app/fixtures:ro
+      - "${MCP_PROXY_CA_CERT_PATH:-/dev/null}:/run/upstream-proxy/ca.pem:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS --max-time 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:18082/mcp | grep -Eq '^[1-5][0-9][0-9]$'"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+volumes:
+  mcp-proxy-var:
