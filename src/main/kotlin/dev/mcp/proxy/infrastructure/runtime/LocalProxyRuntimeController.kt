@@ -2,6 +2,8 @@ package dev.mcp.proxy.infrastructure.runtime
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.net.InetSocketAddress
+import java.net.Socket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -188,6 +190,7 @@ class LocalProxyRuntimeController(
             trafficSettings = trafficSettings,
             stateDirectory = stateDirectory,
         )
+        awaitPortReady(proxyPort)
         val running = RunningProxy(
             handle = handle,
             proxyPort = proxyPort,
@@ -250,6 +253,23 @@ class LocalProxyRuntimeController(
                 ?: persistedState?.mirrorBaseUrl?.let(::MirrorBaseUrl)
                 ?: running?.trafficSettings?.mirrorBaseUrl,
         )
+    }
+
+    private fun awaitPortReady(proxyPort: ProxyPort) {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        var lastError: Exception? = null
+        while (System.nanoTime() < deadline) {
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress("127.0.0.1", proxyPort.value), 200)
+                }
+                return
+            } catch (error: Exception) {
+                lastError = error
+                Thread.sleep(100)
+            }
+        }
+        error("Proxy port ${proxyPort.value} did not become ready: ${lastError?.message ?: "unknown error"}")
     }
 
     private data class RunningProxy(

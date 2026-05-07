@@ -39,6 +39,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request as OkHttpRequest
+import dev.mcp.proxy.domain.MirrorBaseUrl
 import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.UpstreamProxyUrl
@@ -543,7 +544,7 @@ class MockProxyServerTest {
                         upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
                         upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
                         mirrorMockRequests = true,
-                        mirrorBaseUrl = dev.mcp.proxy.domain.MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
+                        mirrorBaseUrl = MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
                     ),
                 ),
                 proxyPort = ProxyPort(proxyPort),
@@ -551,7 +552,7 @@ class MockProxyServerTest {
                     upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
                     upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
                     mirrorMockRequests = true,
-                    mirrorBaseUrl = dev.mcp.proxy.domain.MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
+                    mirrorBaseUrl = MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
                 ),
                 stateDirectory = stateDirectory,
             )
@@ -567,6 +568,62 @@ class MockProxyServerTest {
                 assertEquals("demo", captured.headers.getValue("x-proxy-scenario"))
                 assertEquals("health.json", captured.headers.getValue("x-proxy-fixture"))
                 assertEquals("""{"status":"app"}""", captured.body)
+            } finally {
+                proxy.stop()
+            }
+        }
+    }
+
+    @Test
+    fun `mock mirror preserves original delete method`() = runTest {
+        RecordingHttpProxy().use { upstreamProxy ->
+            val proxyPort = freePort()
+            val stateDirectory = createTempDirectory()
+            val proxy = MitmMockProxyServer(
+                scenarioRepository = InMemoryScenarioRepository(
+                    fixtures = mapOf("resource-delete.json" to """{"deleted":true}"""),
+                ),
+                eventLogger = RecordingProxyEventLogger(),
+                clock = { fixedTime },
+            ).start(
+                activeScenario = ActiveScenarioSettings(
+                    scenario = MockScenario(
+                        name = "demo",
+                        rules = listOf(
+                            MockRule(
+                                method = "DELETE",
+                                path = "/v1/resource",
+                                fixture = "resource-delete.json",
+                            ),
+                        ),
+                    ),
+                    trafficSettings = ProxyTrafficSettings(
+                        upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
+                        upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
+                        mirrorMockRequests = true,
+                        mirrorBaseUrl = MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
+                    ),
+                ),
+                proxyPort = ProxyPort(proxyPort),
+                trafficSettings = ProxyTrafficSettings(
+                    upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
+                    upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
+                    mirrorMockRequests = true,
+                    mirrorBaseUrl = MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
+                ),
+                stateDirectory = stateDirectory,
+            )
+
+            try {
+                val response = delete("http://127.0.0.1:$proxyPort/v1/resource")
+                val captured = upstreamProxy.awaitRequest()
+
+                assertEquals(200, response.statusCode())
+                assertEquals("""{"deleted":true}""", response.body())
+                assertEquals("DELETE http://127.0.0.1:$proxyPort/__proxy_mirror/v1/resource HTTP/1.1", captured.requestLine)
+                assertEquals("mock", captured.headers.getValue("x-proxy-mode"))
+                assertEquals("demo", captured.headers.getValue("x-proxy-scenario"))
+                assertEquals("resource-delete.json", captured.headers.getValue("x-proxy-fixture"))
             } finally {
                 proxy.stop()
             }
@@ -648,6 +705,14 @@ class MockProxyServerTest {
     ): HttpResponse<String> {
         val request = HttpRequest.newBuilder(URI.create(url))
             .POST(HttpRequest.BodyPublishers.ofString(body))
+            .header("Content-Type", "application/json")
+            .build()
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+    }
+
+    private fun delete(url: String): HttpResponse<String> {
+        val request = HttpRequest.newBuilder(URI.create(url))
+            .method("DELETE", HttpRequest.BodyPublishers.noBody())
             .header("Content-Type", "application/json")
             .build()
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString())

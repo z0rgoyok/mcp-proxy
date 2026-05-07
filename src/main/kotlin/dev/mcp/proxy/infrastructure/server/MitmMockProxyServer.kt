@@ -387,7 +387,7 @@ class MitmMockProxyServer(
                     proxier(upstreamProxyUrl).execute(
                         Request(
                             mirrorUri,
-                            "POST",
+                            ruleKey.method,
                             headers,
                             requestBody.toByteArray(),
                         ),
