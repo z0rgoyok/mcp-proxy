@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.png" alt="mcp-proxy — a local HTTP/HTTPS proxy your AI agent drives via MCP" width="900"/>
+</p>
+
 # MCP Proxy
 
 `mcp-proxy` is a local scenario-driven HTTP/HTTPS proxy for client testing. It can run as an MCP server, switch active scenarios, serve JSON fixtures, pass unknown requests to an upstream service, record a request journal, and keep small JSON state values in `var/state/kv`.
