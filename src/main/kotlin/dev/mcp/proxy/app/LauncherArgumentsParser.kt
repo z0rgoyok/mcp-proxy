@@ -30,6 +30,7 @@ class LauncherArgumentsParser {
             proxyPort = options["--proxy-port"]?.toIntOrNull()
                 ?: options["--proxy-port"]?.let { throw IllegalArgumentException("Proxy port must be an integer") },
             upstreamBaseUrl = options["--upstream-base-url"],
+            externalNetwork = options["--external-network"],
             upstreamProxyUrl = options["--upstream-proxy-url"],
             mirrorMockRequests = options["--mirror-mock-requests"]?.toBooleanStrictOrNull()
                 ?: options["--mirror-mock-requests"]?.let { throw IllegalArgumentException("Mirror mock requests must be true or false") },

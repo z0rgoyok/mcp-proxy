@@ -13,6 +13,7 @@ sealed interface LauncherCommand {
         val scenarioName: String,
         val proxyPort: Int?,
         val upstreamBaseUrl: String?,
+        val externalNetwork: String? = null,
         val upstreamProxyUrl: String? = null,
         val mirrorMockRequests: Boolean? = null,
         val mirrorBaseUrl: String? = null,

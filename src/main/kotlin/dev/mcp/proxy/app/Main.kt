@@ -6,38 +6,41 @@ import dev.mcp.proxy.domain.MirrorBaseUrl
 import dev.mcp.proxy.domain.UpstreamProxyUrl
 import dev.mcp.proxy.infrastructure.mcp.HttpMcpServer
 
-fun main(arguments: Array<String>) = runBlocking {
-    val components = AppComponents.create()
-    val parser = LauncherArgumentsParser()
+fun main(arguments: Array<String>) {
+    runBlocking {
+        val components = AppComponents.create()
+        val parser = LauncherArgumentsParser()
 
-    when (val command = parser.parse(arguments.toList())) {
-        is LauncherCommand.Mcp -> {
-            val trafficEnvironment = ProxyTrafficEnvironment.fromSystem()
-            components.runtimeController.startPassthrough(
-                upstreamProxyUrl = trafficEnvironment.upstreamProxyUrl,
-                mirrorMockRequests = trafficEnvironment.mirrorMockRequests,
-                mirrorBaseUrl = trafficEnvironment.mirrorBaseUrl,
-            )
-            HttpMcpServer(
-                mcpServer = dev.mcp.proxy.infrastructure.mcp.GenericProxyMcpServer(components = components),
-            ).run(
-                host = command.host ?: DEFAULT_MCP_HOST,
-                port = command.port ?: DEFAULT_MCP_PORT,
-            )
-        }
-        is LauncherCommand.Runtime -> {
-            val settings = components.buildRuntimeSettingsUseCase.execute(
-                scenarioName = command.scenarioName,
-                proxyPort = command.proxyPort,
-                upstreamBaseUrl = command.upstreamBaseUrl,
-                upstreamProxyUrl = command.upstreamProxyUrl,
-                mirrorMockRequests = command.mirrorMockRequests,
-                mirrorBaseUrl = command.mirrorBaseUrl,
-                stateDirectory = command.stateDirectory,
-                overrides = command.overrides,
-            )
-            println(RuntimeStateOutput().format(components.runProxyUseCase.execute(settings)))
-            awaitCancellation()
+        when (val command = parser.parse(arguments.toList())) {
+            is LauncherCommand.Mcp -> {
+                val trafficEnvironment = ProxyTrafficEnvironment.fromSystem()
+                components.runtimeController.startPassthrough(
+                    upstreamProxyUrl = trafficEnvironment.upstreamProxyUrl,
+                    mirrorMockRequests = trafficEnvironment.mirrorMockRequests,
+                    mirrorBaseUrl = trafficEnvironment.mirrorBaseUrl,
+                )
+                HttpMcpServer(
+                    mcpServer = dev.mcp.proxy.infrastructure.mcp.GenericProxyMcpServer(components = components),
+                ).run(
+                    host = command.host ?: DEFAULT_MCP_HOST,
+                    port = command.port ?: DEFAULT_MCP_PORT,
+                )
+            }
+            is LauncherCommand.Runtime -> {
+                val settings = components.buildRuntimeSettingsUseCase.execute(
+                    scenarioName = command.scenarioName,
+                    proxyPort = command.proxyPort,
+                    upstreamBaseUrl = command.upstreamBaseUrl,
+                    externalNetwork = command.externalNetwork,
+                    upstreamProxyUrl = command.upstreamProxyUrl,
+                    mirrorMockRequests = command.mirrorMockRequests,
+                    mirrorBaseUrl = command.mirrorBaseUrl,
+                    stateDirectory = command.stateDirectory,
+                    overrides = command.overrides,
+                )
+                println(RuntimeStateOutput().format(components.runProxyUseCase.execute(settings)))
+                awaitCancellation()
+            }
         }
     }
 }

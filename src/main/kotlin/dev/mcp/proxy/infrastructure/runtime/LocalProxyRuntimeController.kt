@@ -11,6 +11,7 @@ import dev.mcp.proxy.domain.ProxyRuntimeController
 import dev.mcp.proxy.domain.ProxyRuntimeSettings
 import dev.mcp.proxy.domain.ProxyRuntimeState
 import dev.mcp.proxy.domain.ProxyPort
+import dev.mcp.proxy.domain.ExternalNetworkPolicy
 import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.MirrorBaseUrl
 import dev.mcp.proxy.domain.UpstreamProxyUrl
@@ -78,6 +79,7 @@ class LocalProxyRuntimeController(
         }
         val trafficSettings = ProxyTrafficSettings(
             upstreamBaseUrl = upstreamBaseUrl,
+            externalNetworkPolicy = ExternalNetworkPolicy.Allowed,
             upstreamProxyUrl = upstreamProxyUrl,
             mirrorMockRequests = mirrorMockRequests,
             mirrorBaseUrl = mirrorBaseUrl,
@@ -106,24 +108,34 @@ class LocalProxyRuntimeController(
         stateDirectory: Path = Path.of("var/state").toAbsolutePath().normalize(),
     ): ProxyRuntimeState {
         val running = engines[stateDirectory]
-        val persistedState = readPersistedState(stateDirectory)
+        val persistedState = listOfNotNull(readPersistedState(stateDirectory)).firstOrNull()
         running?.handle?.deactivateScenario()
+        val upstreamBaseUrl = persistedState?.upstreamBaseUrl
+            ?: running?.trafficSettings?.upstreamBaseUrl?.value
+            ?: UpstreamBaseUrl.Default.value
+        val proxyPort = persistedState?.proxyPort
+            ?: running?.proxyPort?.value
+            ?: ProxyPort.Default.value
+        val isRunning = running != null || persistedState?.running == true
         val trafficSettings = ProxyTrafficSettings(
-            upstreamBaseUrl = UpstreamBaseUrl(persistedState?.upstreamBaseUrl ?: running?.trafficSettings?.upstreamBaseUrl?.value ?: UpstreamBaseUrl.Default.value),
-            upstreamProxyUrl = persistedState?.upstreamProxyUrl?.let(::UpstreamProxyUrl) ?: running?.trafficSettings?.upstreamProxyUrl,
-            mirrorMockRequests = persistedState?.mirrorMockRequests ?: running?.trafficSettings?.mirrorMockRequests ?: false,
-            mirrorBaseUrl = persistedState?.mirrorBaseUrl?.let(::MirrorBaseUrl) ?: running?.trafficSettings?.mirrorBaseUrl,
+            upstreamBaseUrl = UpstreamBaseUrl(upstreamBaseUrl),
+            externalNetworkPolicy = ExternalNetworkPolicy.fromValue(
+                persistedState?.externalNetwork ?: running?.trafficSettings?.externalNetworkPolicy?.value,
+            ),
+            upstreamProxyUrl = resolveUpstreamProxyUrl(persistedState, running),
+            mirrorMockRequests = resolveMirrorMockRequests(persistedState, running),
+            mirrorBaseUrl = resolveMirrorBaseUrl(persistedState, running),
         )
         running?.handle?.configureTraffic(trafficSettings)
         persistState(
             stateDirectory = stateDirectory,
             scenario = null,
-            proxyPort = ProxyPort(persistedState?.proxyPort ?: running?.proxyPort?.value ?: ProxyPort.Default.value),
+            proxyPort = ProxyPort(proxyPort),
             trafficSettings = trafficSettings,
-            running = running != null || persistedState?.running == true,
+            running = isRunning,
         )
         return ProxyRuntimeState(
-            running = running != null || persistedState?.running == true,
+            running = isRunning,
             stateDirectory = stateDirectory,
             message = "Proxy scenario disabled; passthrough active",
         )
@@ -211,6 +223,7 @@ class LocalProxyRuntimeController(
             scenario = scenario,
             proxyPort = proxyPort.value,
             upstreamBaseUrl = trafficSettings.upstreamBaseUrl.value,
+            externalNetwork = trafficSettings.externalNetworkPolicy.value,
             upstreamProxyUrl = trafficSettings.upstreamProxyUrl?.value,
             mirrorMockRequests = trafficSettings.mirrorMockRequests,
             mirrorBaseUrl = trafficSettings.mirrorBaseUrl?.value,
@@ -225,12 +238,9 @@ class LocalProxyRuntimeController(
     }
 
     private fun readPersistedState(stateDirectory: Path): PersistedRuntimeState? {
-        val stateFile = stateFile(stateDirectory)
-        return if (Files.exists(stateFile)) {
-            json.decodeFromString<PersistedRuntimeState>(Files.readString(stateFile))
-        } else {
-            null
-        }
+        return runCatching {
+            json.decodeFromString<PersistedRuntimeState>(Files.readString(stateFile(stateDirectory)))
+        }.getOrNull()
     }
 
     private fun normalizePath(path: String): String {
@@ -242,17 +252,44 @@ class LocalProxyRuntimeController(
         val running = engines[settings.stateDirectory]
         return ProxyTrafficSettings(
             upstreamBaseUrl = settings.upstreamBaseUrl,
-            upstreamProxyUrl = settings.upstreamProxyUrl
-                ?: persistedState?.upstreamProxyUrl?.let(::UpstreamProxyUrl)
-                ?: running?.trafficSettings?.upstreamProxyUrl,
-            mirrorMockRequests = settings.mirrorMockRequests
-                ?: persistedState?.mirrorMockRequests
-                ?: running?.trafficSettings?.mirrorMockRequests
-                ?: false,
-            mirrorBaseUrl = settings.mirrorBaseUrl
-                ?: persistedState?.mirrorBaseUrl?.let(::MirrorBaseUrl)
-                ?: running?.trafficSettings?.mirrorBaseUrl,
+            externalNetworkPolicy = settings.externalNetworkPolicy,
+            upstreamProxyUrl = settings.upstreamProxyUrl ?: resolveUpstreamProxyUrl(persistedState, running),
+            mirrorMockRequests = settings.mirrorMockRequests ?: resolveMirrorMockRequests(persistedState, running),
+            mirrorBaseUrl = settings.mirrorBaseUrl ?: resolveMirrorBaseUrl(persistedState, running),
         )
+    }
+
+    private fun resolveUpstreamProxyUrl(
+        persistedState: PersistedRuntimeState?,
+        running: RunningProxy?,
+    ): UpstreamProxyUrl? {
+        return when {
+            persistedState?.upstreamProxyUrl != null -> UpstreamProxyUrl(persistedState.upstreamProxyUrl)
+            running != null -> running.trafficSettings.upstreamProxyUrl
+            else -> null
+        }
+    }
+
+    private fun resolveMirrorMockRequests(
+        persistedState: PersistedRuntimeState?,
+        running: RunningProxy?,
+    ): Boolean {
+        return when {
+            persistedState != null -> persistedState.mirrorMockRequests
+            running != null -> running.trafficSettings.mirrorMockRequests
+            else -> false
+        }
+    }
+
+    private fun resolveMirrorBaseUrl(
+        persistedState: PersistedRuntimeState?,
+        running: RunningProxy?,
+    ): MirrorBaseUrl? {
+        return when {
+            persistedState?.mirrorBaseUrl != null -> MirrorBaseUrl(persistedState.mirrorBaseUrl)
+            running != null -> running.trafficSettings.mirrorBaseUrl
+            else -> null
+        }
     }
 
     private fun awaitPortReady(proxyPort: ProxyPort) {

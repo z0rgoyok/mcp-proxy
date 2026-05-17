@@ -35,6 +35,7 @@ class GenericProxyMcpServerTest {
         assertContains(response, "ca_generate")
         assertContains(response, """"scenario"""")
         assertContains(response, """"proxyPort"""")
+        assertContains(response, """"externalNetwork"""")
         assertContains(response, """"upstreamProxyUrl"""")
         assertContains(response, """"mirrorMockRequests"""")
         assertContains(response, """"mirrorBaseUrl"""")

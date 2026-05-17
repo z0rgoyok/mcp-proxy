@@ -20,6 +20,7 @@ class BuildRuntimeSettingsUseCaseTest {
         assertEquals("demo", settings.scenarioName.value)
         assertEquals(18081, settings.proxyPort.value)
         assertEquals("https://example.com", settings.upstreamBaseUrl.value)
+        assertEquals("forbidden", settings.externalNetworkPolicy.value)
         assertEquals(null, settings.upstreamProxyUrl)
         assertEquals(null, settings.mirrorMockRequests)
         assertEquals(null, settings.mirrorBaseUrl)
@@ -33,12 +34,14 @@ class BuildRuntimeSettingsUseCaseTest {
             scenarioName = "demo",
             proxyPort = null,
             upstreamBaseUrl = "https://backend.example",
+            externalNetwork = "allowed",
             upstreamProxyUrl = "http://host.docker.internal:8888",
             mirrorMockRequests = true,
             mirrorBaseUrl = "http://127.0.0.1:18081/__proxy_mirror",
             stateDirectory = null,
         )
 
+        assertEquals("allowed", settings.externalNetworkPolicy.value)
         assertEquals("http://host.docker.internal:8888", settings.upstreamProxyUrl?.value)
         assertEquals(true, settings.mirrorMockRequests)
         assertEquals("http://127.0.0.1:18081/__proxy_mirror", settings.mirrorBaseUrl?.value)

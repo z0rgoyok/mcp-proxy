@@ -39,6 +39,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request as OkHttpRequest
+import dev.mcp.proxy.domain.ExternalNetworkPolicy
 import dev.mcp.proxy.domain.MirrorBaseUrl
 import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
@@ -524,6 +525,47 @@ class MockProxyServerTest {
     }
 
     @Test
+    fun `mitm proxy blocks unmatched request when external network is forbidden`() = runTest {
+        RecordingHttpProxy().use { upstreamProxy ->
+            val proxyPort = freePort()
+            val stateDirectory = createTempDirectory()
+            val proxy = MitmMockProxyServer(
+                scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+                eventLogger = RecordingProxyEventLogger(),
+                clock = { fixedTime },
+            ).start(
+                activeScenario = ActiveScenarioSettings(
+                    scenario = MockScenario(name = "demo", rules = emptyList()),
+                    trafficSettings = ProxyTrafficSettings(
+                        upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
+                        externalNetworkPolicy = ExternalNetworkPolicy.Forbidden,
+                        upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
+                    ),
+                ),
+                proxyPort = ProxyPort(proxyPort),
+                trafficSettings = ProxyTrafficSettings(
+                    upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
+                    externalNetworkPolicy = ExternalNetworkPolicy.Forbidden,
+                    upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
+                ),
+                stateDirectory = stateDirectory,
+            )
+
+            try {
+                val response = get("http://127.0.0.1:$proxyPort/real")
+                val journal = stateDirectory.resolve("journal/events.jsonl").toFile().readText()
+
+                assertEquals(599, response.statusCode())
+                assertContains(response.body(), "forbidden_external_network")
+                assertContains(journal, """"mode":"forbidden"""")
+                assertContains(journal, """"path":"/real"""")
+            } finally {
+                proxy.stop()
+            }
+        }
+    }
+
+    @Test
     fun `mock response can be mirrored to upstream proxy without changing app response`() = runTest {
         RecordingHttpProxy().use { upstreamProxy ->
             val proxyPort = freePort()
@@ -639,7 +681,12 @@ class MockProxyServerTest {
             stateDirectory.resolve("runtime.json"),
             Json.encodeToString(
                 PersistedRuntimeState.serializer(),
-                PersistedRuntimeState("demo", proxyPort, "https://example.com", true),
+                PersistedRuntimeState(
+                    scenario = "demo",
+                    proxyPort = proxyPort,
+                    upstreamBaseUrl = "https://example.com",
+                    running = true,
+                ),
             ),
         )
         Files.createDirectories(stateDirectory.resolve("kv"))
@@ -789,7 +836,7 @@ class MockProxyServerTest {
         val events = mutableListOf<ProxyLogEvent>()
 
         override fun log(event: ProxyLogEvent) {
-            events += event
+            events.add(event)
         }
     }
 

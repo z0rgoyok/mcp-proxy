@@ -18,6 +18,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import dev.mcp.proxy.domain.ExternalNetworkPolicy
 import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.UpstreamProxyUrl
@@ -337,6 +338,20 @@ class MitmMockProxyServer(
             scenarioSettings: ActiveScenarioSettings?,
             traffic: ProxyTrafficSettings,
         ): Response {
+            if (traffic.externalNetworkPolicy == ExternalNetworkPolicy.Forbidden) {
+                val body = buildForbiddenExternalNetworkResponse(ruleKey).toByteArray()
+                journalRequest(
+                    request = request,
+                    ruleKey = ruleKey,
+                    mode = FORBIDDEN_MODE,
+                    status = FORBIDDEN_RULE_STATUS,
+                    fixture = null,
+                    requestBody = requestBody,
+                    responseBody = body,
+                    scenarioSettings = scenarioSettings,
+                )
+                return jsonResponse(request, FORBIDDEN_RULE_STATUS, body)
+            }
             val selectedUpstreamBaseUrl = traffic.upstreamBaseUrl
             val upstreamUri = if (request.uri.isAbsolute) {
                 request.uri
@@ -462,6 +477,18 @@ class MitmMockProxyServer(
             )
         }
 
+        private fun buildForbiddenExternalNetworkResponse(ruleKey: RuleKey): String {
+            return json.encodeToString(
+                ForbiddenRuleResponse.serializer(),
+                ForbiddenRuleResponse(
+                    error = "forbidden_external_network",
+                    method = ruleKey.method,
+                    path = ruleKey.path,
+                    message = "External network is forbidden and no scenario rule matched request",
+                ),
+            )
+        }
+
         private fun journalRequest(
             request: Request,
             ruleKey: RuleKey,
@@ -530,6 +557,7 @@ class MitmMockProxyServer(
         const val BIND_HOST = "0.0.0.0"
         const val ROOT_CA_KEY_FILE = "mcp-proxy-root-ca.key"
         const val PASSTHROUGH_MODE = "passthrough"
+        const val FORBIDDEN_MODE = "forbidden"
         const val PASSTHROUGH_SCENARIO = "passthrough"
         const val FORBIDDEN_RULE_STATUS = 599
         const val MIRROR_PATH = "/__proxy_mirror"

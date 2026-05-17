@@ -7,6 +7,7 @@ data class ProxyRuntimeSettings(
     val scenarioName: ScenarioName,
     val proxyPort: ProxyPort,
     val upstreamBaseUrl: UpstreamBaseUrl,
+    val externalNetworkPolicy: ExternalNetworkPolicy = ExternalNetworkPolicy.Forbidden,
     val upstreamProxyUrl: UpstreamProxyUrl? = null,
     val mirrorMockRequests: Boolean? = null,
     val mirrorBaseUrl: MirrorBaseUrl? = null,

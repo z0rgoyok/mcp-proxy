@@ -134,6 +134,10 @@ class GenericProxyMcpServer(
                     description = "Fallback upstream base URL for passthrough requests.",
                 ),
                 stringProperty(
+                    name = "externalNetwork",
+                    description = "External network policy for unmatched requests: forbidden or allowed. Defaults to forbidden.",
+                ),
+                stringProperty(
                     name = "upstreamProxyUrl",
                     description = "Optional upstream proxy for passthrough and mirror requests.",
                 ),
@@ -188,6 +192,7 @@ class GenericProxyMcpServer(
             scenarioName = requireScenarioArgument(arguments),
             proxyPort = arguments.intValue("proxyPort"),
             upstreamBaseUrl = arguments.stringValue("upstreamBaseUrl"),
+            externalNetwork = arguments.stringValue("externalNetwork"),
             upstreamProxyUrl = arguments.stringValue("upstreamProxyUrl"),
             mirrorMockRequests = arguments.booleanValue("mirrorMockRequests"),
             mirrorBaseUrl = arguments.stringValue("mirrorBaseUrl"),
@@ -205,19 +210,30 @@ class GenericProxyMcpServer(
     private fun scenarioStatus(arguments: JsonObject): String {
         val stateDirectory = stateDirectory(arguments)
         val runtimeFile = stateDirectory.resolve("runtime.json")
-        val persistedState = if (Files.exists(runtimeFile)) {
+        val persistedState = runCatching {
             json.decodeFromString<PersistedRuntimeState>(Files.readString(runtimeFile))
-        } else {
-            null
+        }.getOrNull()
+        if (persistedState == null) {
+            return listOf(
+                "running=false",
+                "stateDirectory=$stateDirectory",
+                "scenario=passthrough",
+                "proxyPort=18081",
+                "upstreamProxyUrl=",
+                "externalNetwork=forbidden",
+                "mirrorMockRequests=false",
+                "mirrorBaseUrl=",
+            ).joinToString("\n")
         }
         return listOf(
-            "running=${persistedState?.running ?: false}",
+            "running=${persistedState.running}",
             "stateDirectory=$stateDirectory",
-            "scenario=${persistedState?.scenario ?: "passthrough"}",
-            "proxyPort=${persistedState?.proxyPort ?: 18081}",
-            "upstreamProxyUrl=${persistedState?.upstreamProxyUrl ?: ""}",
-            "mirrorMockRequests=${persistedState?.mirrorMockRequests ?: false}",
-            "mirrorBaseUrl=${persistedState?.mirrorBaseUrl ?: ""}",
+            "scenario=${persistedState.scenario ?: "passthrough"}",
+            "proxyPort=${persistedState.proxyPort}",
+            "upstreamProxyUrl=${persistedState.upstreamProxyUrl ?: ""}",
+            "externalNetwork=${persistedState.externalNetwork}",
+            "mirrorMockRequests=${persistedState.mirrorMockRequests}",
+            "mirrorBaseUrl=${persistedState.mirrorBaseUrl ?: ""}",
         ).joinToString("\n")
     }
 
@@ -357,20 +373,20 @@ class GenericProxyMcpServer(
     }
 
     private fun JsonObject.stringValue(name: String): String? {
-        return get(name)?.jsonPrimitive?.contentOrNull
+        return this[name]?.jsonPrimitive?.contentOrNull
     }
 
     private fun JsonObject.intValue(name: String): Int? {
-        return get(name)?.jsonPrimitive?.intOrNull
+        return this[name]?.jsonPrimitive?.intOrNull
     }
 
     private fun JsonObject.booleanValue(name: String): Boolean? {
-        return get(name)?.jsonPrimitive?.booleanOrNull
+        return this[name]?.jsonPrimitive?.booleanOrNull
     }
 
     private companion object {
-        val NOTIFICATION_METHODS = setOf("initialized", "notifications/initialized")
-        val TOOL_NAMES = listOf(
+        val NOTIFICATION_METHODS: Set<String> = setOf("initialized", "notifications/initialized")
+        val TOOL_NAMES: List<String> = listOf(
             "scenario_list",
             "scenario_enable",
             "scenario_status",
@@ -386,6 +402,6 @@ class GenericProxyMcpServer(
             "ca_generate",
         )
         const val STATE_DIRECTORY = "kv"
-        val STATE_KEY_PATTERN = Regex("[A-Za-z0-9._-]+")
+        val STATE_KEY_PATTERN: Regex = Regex("[A-Za-z0-9._-]+")
     }
 }

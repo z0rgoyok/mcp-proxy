@@ -7,6 +7,7 @@ data class PersistedRuntimeState(
     val scenario: String? = null,
     val proxyPort: Int,
     val upstreamBaseUrl: String,
+    val externalNetwork: String = "forbidden",
     val running: Boolean,
     val upstreamProxyUrl: String? = null,
     val mirrorMockRequests: Boolean = false,
