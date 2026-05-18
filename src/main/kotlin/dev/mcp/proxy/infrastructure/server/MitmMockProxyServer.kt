@@ -18,6 +18,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import okhttp3.Request as OkHttpRequest
+import okhttp3.RequestBody.Companion.toRequestBody
 import dev.mcp.proxy.domain.ExternalNetworkPolicy
 import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
@@ -146,9 +148,9 @@ class MitmMockProxyServer(
         private val clock: () -> Instant,
         private val json: Json,
         private val mirrorExecutor: ExecutorService,
-        private val directProxier: Proxier = Proxier.create(),
     ) : Proxier {
-        private val proxiers = ConcurrentHashMap<String, Proxier>()
+        private val directHttpClient = OkHttpClient()
+        private val proxiedHttpClients = ConcurrentHashMap<String, OkHttpClient>()
         private val mirrorResponses = ConcurrentHashMap<String, ByteArray>()
         private val adminHtml = ProxyAdminHtml(json)
         private val stateStoreReader = StateStoreAdminReader()
@@ -362,9 +364,9 @@ class MitmMockProxyServer(
                 upstreamUri,
                 request.method,
                 request.headers.filterKeys { name -> name.lowercase() !in ProxyRequestJournal.SKIPPED_UPSTREAM_HEADERS },
-                request.body,
+                request.body ?: emptyRequestBodyFor(method = request.method),
             )
-            val response = proxier(traffic.upstreamProxyUrl).execute(upstreamRequest)
+            val response = executeUpstream(upstreamRequest, traffic.upstreamProxyUrl)
             val body = response.body ?: ByteArray(0)
             journalRequest(request, ruleKey, PASSTHROUGH_MODE, response.statusCode, null, requestBody, body, null, upstreamRequest.uri.toString(), scenarioSettings = scenarioSettings)
             return response
@@ -399,13 +401,14 @@ class MitmMockProxyServer(
             ).filterValues(String::isNotEmpty)
             mirrorExecutor.execute {
                 runCatching {
-                    proxier(upstreamProxyUrl).execute(
+                    executeUpstream(
                         Request(
                             mirrorUri,
                             ruleKey.method,
                             headers,
                             requestBody.toByteArray(),
                         ),
+                        upstreamProxyUrl,
                     )
                 }.onFailure {
                     mirrorResponses.remove(mirrorId)
@@ -413,15 +416,53 @@ class MitmMockProxyServer(
             }
         }
 
-        private fun proxier(upstreamProxyUrl: UpstreamProxyUrl?): Proxier {
-            if (upstreamProxyUrl == null) return directProxier
-            return proxiers.getOrPut(upstreamProxyUrl.value) {
-                Proxier.create(
-                    OkHttpClient.Builder()
-                        .proxy(upstreamProxyUrl.toJavaProxy())
-                        .build(),
+        private fun executeUpstream(
+            request: Request,
+            upstreamProxyUrl: UpstreamProxyUrl?,
+        ): Response {
+            val okHttpRequest = OkHttpRequest.Builder()
+                .url(request.uri.toURL())
+                .method(request.method, requestBody(request.method, request.body))
+                .headers(okHttpHeaders(request.headers))
+                .build()
+            upstreamHttpClient(upstreamProxyUrl).newCall(okHttpRequest).execute().use { upstreamResponse ->
+                return Response(
+                    request,
+                    upstreamResponse.code,
+                    upstreamResponse.headers.toMap(),
+                    upstreamResponse.body?.bytes(),
                 )
             }
+        }
+
+        private fun okHttpHeaders(headers: Map<String, String>): okhttp3.Headers {
+            return okhttp3.Headers.Builder().apply {
+                headers.forEach { (name, value) -> add(name, value) }
+            }.build()
+        }
+
+        private fun upstreamHttpClient(upstreamProxyUrl: UpstreamProxyUrl?): OkHttpClient {
+            if (upstreamProxyUrl == null) return directHttpClient
+            return proxiedHttpClients.getOrPut(upstreamProxyUrl.value) {
+                OkHttpClient.Builder()
+                    .proxy(upstreamProxyUrl.toJavaProxy())
+                    .build()
+            }
+        }
+
+        private fun requestBody(
+            method: String,
+            body: ByteArray?,
+        ): okhttp3.RequestBody? {
+            return when {
+                body != null && body.isNotEmpty() -> body.toRequestBody()
+                methodRequiresRequestBody(method) -> ByteArray(0).toRequestBody()
+                else -> null
+            }
+        }
+
+        private fun emptyRequestBodyFor(method: String): ByteArray? {
+            return if (methodRequiresRequestBody(method)) ByteArray(0) else null
         }
 
         private fun jsonResponse(

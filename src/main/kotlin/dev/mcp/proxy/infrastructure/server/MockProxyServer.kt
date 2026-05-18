@@ -319,7 +319,11 @@ class MockProxyServer(
         headers: Set<Map.Entry<String, List<String>>>,
         body: String,
     ): HttpRequest {
-        val bodyPublisher = if (body.isEmpty()) HttpRequest.BodyPublishers.noBody() else HttpRequest.BodyPublishers.ofString(body)
+        val bodyPublisher = when {
+            body.isNotEmpty() -> HttpRequest.BodyPublishers.ofString(body)
+            methodRequiresRequestBody(method) -> HttpRequest.BodyPublishers.ofByteArray(ByteArray(0))
+            else -> HttpRequest.BodyPublishers.noBody()
+        }
         val builder = HttpRequest.newBuilder(URI.create(url)).method(method, bodyPublisher)
         headers.forEach { (name, values) ->
             if (name.lowercase() !in ProxyRequestJournal.SKIPPED_UPSTREAM_HEADERS) values.forEach { builder.header(name, it) }

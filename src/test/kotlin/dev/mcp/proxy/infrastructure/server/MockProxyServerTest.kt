@@ -4,8 +4,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -348,6 +350,57 @@ class MockProxyServerTest {
     }
 
     @Test
+    fun `post without body passes through to upstream`() = runTest {
+        val upstreamPort = freePort()
+        val upstreamBody = AtomicReference<String>()
+        val upstream = embeddedServer(
+            factory = Netty,
+            host = "127.0.0.1",
+            port = upstreamPort,
+        ) {
+            routing {
+                post("/users/{id}/invites/") {
+                    upstreamBody.set(call.receiveText())
+                    call.respondText(
+                        text = """{"status":"invited"}""",
+                        contentType = ContentType.Application.Json,
+                        status = HttpStatusCode.Accepted,
+                    )
+                }
+            }
+        }.start(wait = false)
+        val proxyPort = freePort()
+        val stateDirectory = createTempDirectory()
+        val eventLogger = RecordingProxyEventLogger()
+        val proxy = MockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+            eventLogger = eventLogger,
+            clock = { fixedTime },
+        ).start(
+            scenario = MockScenario(name = "demo", rules = emptyList()),
+            proxyPort = ProxyPort(proxyPort),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:$upstreamPort"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val response = postEmptyBody("http://127.0.0.1:$proxyPort/users/42/invites/")
+
+            assertEquals(202, response.statusCode())
+            assertEquals("""{"status":"invited"}""", response.body())
+            assertEquals("", upstreamBody.get())
+            assertContains(stateDirectory.resolve("journal/events.jsonl").toFile().readText(), """"mode":"passthrough"""")
+            val requestLog = assertIs<ProxyLogEvent.RequestHandled>(eventLogger.events[1])
+            assertEquals("POST", requestLog.method)
+            assertEquals("/users/42/invites/", requestLog.path)
+            assertEquals("passthrough", requestLog.mode)
+        } finally {
+            proxy.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+            upstream.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
+    }
+
+    @Test
     fun `connect request returns diagnostic instead of passthrough failure`() = runTest {
         val proxyPort = freePort()
         val stateDirectory = createTempDirectory()
@@ -521,6 +574,52 @@ class MockProxyServerTest {
             } finally {
                 proxy.stop()
             }
+        }
+    }
+
+    @Test
+    fun `mitm passthrough supports raw post without body`() = runTest {
+        val upstreamPort = freePort()
+        val upstreamBody = AtomicReference<String>()
+        val upstream = embeddedServer(
+            factory = Netty,
+            host = "127.0.0.1",
+            port = upstreamPort,
+        ) {
+            routing {
+                post("/users/{id}/invites/") {
+                    upstreamBody.set(call.receiveText())
+                    call.respondText(
+                        text = """{"status":"invited"}""",
+                        contentType = ContentType.Application.Json,
+                        status = HttpStatusCode.Accepted,
+                    )
+                }
+            }
+        }.start(wait = false)
+        val proxyPort = freePort()
+        val stateDirectory = createTempDirectory()
+        val proxy = MitmMockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+            eventLogger = RecordingProxyEventLogger(),
+            clock = { fixedTime },
+        ).start(
+            activeScenario = null,
+            proxyPort = ProxyPort(proxyPort),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:$upstreamPort"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val response = sendRawPostWithoutBody(proxyPort, "/users/42/invites/")
+
+            assertContains(response, "202 Accepted")
+            assertContains(response, """{"status":"invited"}""")
+            assertEquals("", upstreamBody.get())
+            assertContains(stateDirectory.resolve("journal/events.jsonl").toFile().readText(), """"mode":"passthrough"""")
+        } finally {
+            proxy.stop()
+            upstream.stop(gracePeriodMillis = 0, timeoutMillis = 0)
         }
     }
 
@@ -757,6 +856,13 @@ class MockProxyServerTest {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
     }
 
+    private fun postEmptyBody(url: String): HttpResponse<String> {
+        val request = HttpRequest.newBuilder(URI.create(url))
+            .POST(HttpRequest.BodyPublishers.ofString(""))
+            .build()
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+    }
+
     private fun delete(url: String): HttpResponse<String> {
         val request = HttpRequest.newBuilder(URI.create(url))
             .method("DELETE", HttpRequest.BodyPublishers.noBody())
@@ -777,9 +883,35 @@ class MockProxyServerTest {
                 .takeWhile { line -> line.isNotEmpty() }
                 .toList()
             val contentLength = headers.firstNotNullOfOrNull { line ->
-                line.substringAfter("Content-Length: ", missingDelimiterValue = "")
-                    .takeIf { it.isNotBlank() }
-                    ?.toInt()
+                line.contentLengthHeaderValue()
+            } ?: 0
+            val body = CharArray(contentLength)
+            reader.read(body)
+            return (headers + body.concatToString()).joinToString(separator = "\n")
+        }
+    }
+
+    private fun sendRawPostWithoutBody(
+        port: Int,
+        path: String,
+    ): String {
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 2_000
+            socket.getOutputStream().write(
+                (
+                    "POST $path HTTP/1.1\r\n" +
+                        "Host: 127.0.0.1:$port\r\n" +
+                        "Accept: application/json\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n"
+                    ).toByteArray(),
+            )
+            val reader = socket.getInputStream().bufferedReader()
+            val headers = generateSequence { reader.readLine() }
+                .takeWhile { line -> line.isNotEmpty() }
+                .toList()
+            val contentLength = headers.firstNotNullOfOrNull { line ->
+                line.contentLengthHeaderValue()
             } ?: 0
             val body = CharArray(contentLength)
             reader.read(body)
@@ -809,6 +941,14 @@ class MockProxyServerTest {
             .sslSocketFactory(sslContext.socketFactory, trustManager)
             .protocols(listOf(Protocol.HTTP_1_1))
             .build()
+    }
+
+    private fun String.contentLengthHeaderValue(): Int? {
+        return takeIf { it.startsWith("Content-Length:", ignoreCase = true) }
+            ?.substringAfter(":")
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?.toInt()
     }
 
     private fun freePort(): Int {

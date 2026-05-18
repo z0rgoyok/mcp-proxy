@@ -69,6 +69,10 @@ fun pathMatches(
     }
 }
 
+fun methodRequiresRequestBody(method: String): Boolean {
+    return method.uppercase() in METHODS_REQUIRING_REQUEST_BODY
+}
+
 private fun String.isPathVariable(): Boolean {
     return startsWith("{") && endsWith("}") && length > 2
 }
@@ -76,3 +80,5 @@ private fun String.isPathVariable(): Boolean {
 private fun MockRule.matchesRequestBody(requestBody: String): Boolean {
     return requestBodyContains.all(requestBody::contains)
 }
+
+private val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
