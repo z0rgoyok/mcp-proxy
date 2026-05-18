@@ -4,11 +4,13 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.toByteArray
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
@@ -33,6 +35,7 @@ import javax.net.ssl.X509TrustManager
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
@@ -401,6 +404,52 @@ class MockProxyServerTest {
     }
 
     @Test
+    fun `binary post body passes through to upstream unchanged`() = runTest {
+        val upstreamPort = freePort()
+        val upstreamBody = AtomicReference<ByteArray>()
+        val upstream = embeddedServer(
+            factory = Netty,
+            host = "127.0.0.1",
+            port = upstreamPort,
+        ) {
+            routing {
+                post("/binary") {
+                    upstreamBody.set(call.receiveChannel().toByteArray())
+                    call.respondText(
+                        text = """{"status":"binary"}""",
+                        contentType = ContentType.Application.Json,
+                        status = HttpStatusCode.Accepted,
+                    )
+                }
+            }
+        }.start(wait = false)
+        val proxyPort = freePort()
+        val stateDirectory = createTempDirectory()
+        val proxy = MockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+            eventLogger = RecordingProxyEventLogger(),
+            clock = { fixedTime },
+        ).start(
+            scenario = MockScenario(name = "demo", rules = emptyList()),
+            proxyPort = ProxyPort(proxyPort),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:$upstreamPort"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val requestBody = binaryPayload()
+            val response = postBinary("http://127.0.0.1:$proxyPort/binary", requestBody)
+
+            assertEquals(202, response.statusCode())
+            assertEquals("""{"status":"binary"}""", response.body())
+            assertContentEquals(requestBody, upstreamBody.get())
+        } finally {
+            proxy.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+            upstream.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
+    }
+
+    @Test
     fun `connect request returns diagnostic instead of passthrough failure`() = runTest {
         val proxyPort = freePort()
         val stateDirectory = createTempDirectory()
@@ -624,6 +673,52 @@ class MockProxyServerTest {
     }
 
     @Test
+    fun `mitm passthrough preserves binary post body`() = runTest {
+        val upstreamPort = freePort()
+        val upstreamBody = AtomicReference<ByteArray>()
+        val upstream = embeddedServer(
+            factory = Netty,
+            host = "127.0.0.1",
+            port = upstreamPort,
+        ) {
+            routing {
+                post("/binary") {
+                    upstreamBody.set(call.receiveChannel().toByteArray())
+                    call.respondText(
+                        text = """{"status":"binary"}""",
+                        contentType = ContentType.Application.Json,
+                        status = HttpStatusCode.Accepted,
+                    )
+                }
+            }
+        }.start(wait = false)
+        val proxyPort = freePort()
+        val stateDirectory = createTempDirectory()
+        val proxy = MitmMockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+            eventLogger = RecordingProxyEventLogger(),
+            clock = { fixedTime },
+        ).start(
+            activeScenario = null,
+            proxyPort = ProxyPort(proxyPort),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:$upstreamPort"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val requestBody = binaryPayload()
+            val response = postBinary("http://127.0.0.1:$proxyPort/binary", requestBody)
+
+            assertEquals(202, response.statusCode())
+            assertEquals("""{"status":"binary"}""", response.body())
+            assertContentEquals(requestBody, upstreamBody.get())
+        } finally {
+            proxy.stop()
+            upstream.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
+    }
+
+    @Test
     fun `mitm proxy blocks unmatched request when external network is forbidden`() = runTest {
         RecordingHttpProxy().use { upstreamProxy ->
             val proxyPort = freePort()
@@ -709,6 +804,55 @@ class MockProxyServerTest {
                 assertEquals("demo", captured.headers.getValue("x-proxy-scenario"))
                 assertEquals("health.json", captured.headers.getValue("x-proxy-fixture"))
                 assertEquals("""{"status":"app"}""", captured.body)
+            } finally {
+                proxy.stop()
+            }
+        }
+    }
+
+    @Test
+    fun `mock mirror preserves binary request body`() = runTest {
+        RecordingHttpProxy().use { upstreamProxy ->
+            val proxyPort = freePort()
+            val stateDirectory = createTempDirectory()
+            val proxy = MitmMockProxyServer(
+                scenarioRepository = InMemoryScenarioRepository(
+                    fixtures = mapOf("binary.json" to """{"status":"mock"}"""),
+                ),
+                eventLogger = RecordingProxyEventLogger(),
+                clock = { fixedTime },
+            ).start(
+                activeScenario = ActiveScenarioSettings(
+                    scenario = MockScenario(
+                        name = "demo",
+                        rules = listOf(MockRule(method = "POST", path = "/binary", fixture = "binary.json")),
+                    ),
+                    trafficSettings = ProxyTrafficSettings(
+                        upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
+                        upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
+                        mirrorMockRequests = true,
+                        mirrorBaseUrl = MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
+                    ),
+                ),
+                proxyPort = ProxyPort(proxyPort),
+                trafficSettings = ProxyTrafficSettings(
+                    upstreamBaseUrl = UpstreamBaseUrl("http://backend.example"),
+                    upstreamProxyUrl = UpstreamProxyUrl("http://127.0.0.1:${upstreamProxy.port}"),
+                    mirrorMockRequests = true,
+                    mirrorBaseUrl = MirrorBaseUrl("http://127.0.0.1:$proxyPort/__proxy_mirror"),
+                ),
+                stateDirectory = stateDirectory,
+            )
+
+            try {
+                val requestBody = binaryPayload()
+                val response = postBinary("http://127.0.0.1:$proxyPort/binary", requestBody)
+                val captured = upstreamProxy.awaitRequest()
+
+                assertEquals(200, response.statusCode())
+                assertEquals("""{"status":"mock"}""", response.body())
+                assertEquals("POST http://127.0.0.1:$proxyPort/__proxy_mirror/binary HTTP/1.1", captured.requestLine)
+                assertContentEquals(requestBody, captured.bodyBytes)
             } finally {
                 proxy.stop()
             }
@@ -856,6 +1000,17 @@ class MockProxyServerTest {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
     }
 
+    private fun postBinary(
+        url: String,
+        body: ByteArray,
+    ): HttpResponse<String> {
+        val request = HttpRequest.newBuilder(URI.create(url))
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+            .header("Content-Type", "application/octet-stream")
+            .build()
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+    }
+
     private fun postEmptyBody(url: String): HttpResponse<String> {
         val request = HttpRequest.newBuilder(URI.create(url))
             .POST(HttpRequest.BodyPublishers.ofString(""))
@@ -951,6 +1106,10 @@ class MockProxyServerTest {
             ?.toInt()
     }
 
+    private fun binaryPayload(): ByteArray {
+        return byteArrayOf(0, 1, 2, 127, 128.toByte(), 255.toByte(), 65)
+    }
+
     private fun freePort(): Int {
         return ServerSocket(0).use { socket -> socket.localPort }
     }
@@ -987,10 +1146,10 @@ class MockProxyServerTest {
         private val worker = Thread {
             serverSocket.use { socket ->
                 socket.accept().use { client ->
-                    val reader = client.getInputStream().bufferedReader()
-                    val requestLine = reader.readLine()
+                    val input = client.getInputStream()
+                    val requestLine = readAsciiLine(input)
                     val headers = mutableMapOf<String, String>()
-                    generateSequence { reader.readLine() }
+                    generateSequence { readAsciiLine(input) }
                         .takeWhile(String::isNotEmpty)
                         .forEach { line ->
                             val name = line.substringBefore(":").lowercase(Locale.ROOT)
@@ -998,15 +1157,15 @@ class MockProxyServerTest {
                             headers[name] = value
                         }
                     val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
-                    val requestBody = CharArray(contentLength)
+                    val requestBody = ByteArray(contentLength)
                     if (contentLength > 0) {
-                        reader.read(requestBody)
+                        input.readNBytes(requestBody, 0, contentLength)
                     }
                     request.set(
                         CapturedRequest(
                             requestLine = requestLine,
                             headers = headers,
-                            body = requestBody.concatToString(),
+                            bodyBytes = requestBody,
                         ),
                     )
                     latch.countDown()
@@ -1040,11 +1199,32 @@ class MockProxyServerTest {
             runCatching { serverSocket.close() }
             worker.join(500)
         }
+
+        private fun readAsciiLine(input: java.io.InputStream): String {
+            val buffer = mutableListOf<Byte>()
+            while (true) {
+                val next = input.read()
+                check(next >= 0) { "Unexpected EOF while reading HTTP request" }
+                when (next.toByte()) {
+                    '\n'.code.toByte() -> {
+                        val bytes = if (buffer.lastOrNull() == '\r'.code.toByte()) {
+                            buffer.dropLast(1).toByteArray()
+                        } else {
+                            buffer.toByteArray()
+                        }
+                        return bytes.toString(Charsets.US_ASCII)
+                    }
+                    else -> buffer += next.toByte()
+                }
+            }
+        }
     }
 
-    private data class CapturedRequest(
+    private class CapturedRequest(
         val requestLine: String,
         val headers: Map<String, String>,
-        val body: String,
-    )
+        val bodyBytes: ByteArray,
+    ) {
+        val body: String = bodyBytes.toString(Charsets.UTF_8)
+    }
 }

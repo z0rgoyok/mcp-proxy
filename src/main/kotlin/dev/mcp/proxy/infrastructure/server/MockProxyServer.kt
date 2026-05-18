@@ -9,15 +9,16 @@ import io.ktor.server.application.call
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
-import io.ktor.server.request.receiveText
 import io.ktor.server.request.uri
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.util.pipeline.PipelineContext
+import io.ktor.utils.io.toByteArray
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -85,7 +86,7 @@ class MockProxyServer(
                     handleUnsupportedConnect(this, ruleKey, scenario, stateDirectory, journalFile)
                     return@intercept
                 }
-                val requestBody = call.receiveText()
+                val requestBody = CapturedRequestBody(call.receiveChannel().toByteArray())
                 handleFixture(this, ruleKey, rules, requestState, scenario, stateDirectory, journalFile, requestBody)
                     ?: handlePassthrough(this, ruleKey, upstreamBaseUrl, scenario, stateDirectory, journalFile, requestBody)
             }
@@ -117,7 +118,7 @@ class MockProxyServer(
             mode = CONNECT_UNSUPPORTED_MODE,
             status = HttpStatusCode.NotImplemented.value,
             fixture = null,
-            requestBody = "",
+            requestBody = ByteArray(0),
             responseBody = responseBody.toByteArray(),
             stateDirectory = stateDirectory,
             journalFile = journalFile,
@@ -133,9 +134,9 @@ class MockProxyServer(
         scenario: MockScenario,
         stateDirectory: Path,
         journalFile: Path,
-        requestBody: String,
+        requestBody: CapturedRequestBody,
     ): Unit? {
-        val rule = requestState.selectRule(ruleKey, rules, requestBody) ?: return null
+        val rule = requestState.selectRule(ruleKey, rules, requestBody.text) ?: return null
         val status = HttpStatusCode.fromValue(rule.effectiveStatus())
         val responseBody = responseBody(rule)
         val mode = rule.mode.scenarioValue
@@ -145,7 +146,7 @@ class MockProxyServer(
             mode = mode,
             status = status.value,
             fixture = rule.fixture,
-            requestBody = requestBody,
+            requestBody = requestBody.bytes,
             responseBody = responseBody,
             stateDirectory = stateDirectory,
             journalFile = journalFile,
@@ -166,16 +167,16 @@ class MockProxyServer(
         scenario: MockScenario,
         stateDirectory: Path,
         journalFile: Path,
-        requestBody: String,
+        requestBody: CapturedRequestBody,
     ) {
         val upstreamUrl = buildUpstreamUrl(upstreamBaseUrl, context.call.request.uri)
         val upstreamResponse = withContext(Dispatchers.IO) {
             httpClient.send(
-                buildUpstreamRequest(ruleKey.method, upstreamUrl, context.call.request.headers.entries(), requestBody),
+                buildUpstreamRequest(ruleKey.method, upstreamUrl, context.call.request.headers.entries(), requestBody.bytes),
                 HttpResponse.BodyHandlers.ofByteArray(),
             )
         }
-        context.journalRequest(ruleKey, scenario.name, PASSTHROUGH_MODE, upstreamResponse.statusCode(), null, requestBody, upstreamResponse.body(), stateDirectory, journalFile, upstreamUrl)
+        context.journalRequest(ruleKey, scenario.name, PASSTHROUGH_MODE, upstreamResponse.statusCode(), null, requestBody.bytes, upstreamResponse.body(), stateDirectory, journalFile, upstreamUrl)
         context.call.respondBytes(
             bytes = upstreamResponse.body(),
             contentType = upstreamResponse.headers().firstValue(HttpHeaders.ContentType).map(ContentType::parse).orElse(ContentType.Application.Json),
@@ -198,7 +199,7 @@ class MockProxyServer(
         mode: String,
         status: Int,
         fixture: String?,
-        requestBody: String,
+        requestBody: ByteArray,
         responseBody: ByteArray,
         stateDirectory: Path,
         journalFile: Path,
@@ -208,7 +209,7 @@ class MockProxyServer(
         timeoutMillis: Long? = null,
         effectiveDelayMillis: Long? = null,
     ) {
-        val requestBodyFile = requestJournal.storeBody(stateDirectory, requestBody.toByteArray(), requestBodySuffix(mode))
+        val requestBodyFile = requestJournal.storeBody(stateDirectory, requestBody, requestBodySuffix(mode))
         val responseBodyFile = requestJournal.storeBody(stateDirectory, responseBody, responseBodySuffix(mode))
         val timestamp = clock()
         requestJournal.writeEvent(
@@ -317,10 +318,10 @@ class MockProxyServer(
         method: String,
         url: String,
         headers: Set<Map.Entry<String, List<String>>>,
-        body: String,
+        body: ByteArray,
     ): HttpRequest {
         val bodyPublisher = when {
-            body.isNotEmpty() -> HttpRequest.BodyPublishers.ofString(body)
+            body.isNotEmpty() -> HttpRequest.BodyPublishers.ofByteArray(body)
             methodRequiresRequestBody(method) -> HttpRequest.BodyPublishers.ofByteArray(ByteArray(0))
             else -> HttpRequest.BodyPublishers.noBody()
         }

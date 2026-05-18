@@ -16,6 +16,20 @@ data class RuleEntry(
     val rule: MockRule,
 )
 
+class CapturedRequestBody(
+    val bytes: ByteArray,
+) {
+    val text: String = bytes.toString(Charsets.UTF_8)
+
+    companion object {
+        val Empty = CapturedRequestBody(ByteArray(0))
+
+        fun from(bytes: ByteArray?): CapturedRequestBody {
+            return if (bytes == null) Empty else CapturedRequestBody(bytes)
+        }
+    }
+}
+
 @Serializable
 data class ForbiddenRuleResponse(
     val error: String,

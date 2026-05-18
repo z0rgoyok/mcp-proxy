@@ -172,7 +172,7 @@ class MitmMockProxyServer(
 
         override fun execute(request: Request): Response {
             val ruleKey = RuleKey(request.method.uppercase(), normalizeProxyPath(request.uri.rawPath ?: request.uri.path))
-            val requestBody = request.body?.toString(Charsets.UTF_8).orEmpty()
+            val requestBody = CapturedRequestBody.from(request.body)
             val scenarioSettings = activeScenario.current()
             val traffic = scenarioSettings?.trafficSettings ?: trafficSettings.current()
             val adminResponse = handleAdmin(request, ruleKey)
@@ -305,13 +305,13 @@ class MitmMockProxyServer(
         private fun handleFixture(
             request: Request,
             ruleKey: RuleKey,
-            requestBody: String,
+            requestBody: CapturedRequestBody,
             scenarioSettings: ActiveScenarioSettings?,
             traffic: ProxyTrafficSettings,
         ): Response? {
             if (scenarioSettings == null) return null
             val rules = scenarioSettings.rules()
-            val rule = requestState.get().selectRule(ruleKey, rules, requestBody) ?: return null
+            val rule = requestState.get().selectRule(ruleKey, rules, requestBody.text) ?: return null
             val body = responseBody(rule)
             val mode = rule.mode.scenarioValue
             val status = rule.effectiveStatus()
@@ -321,7 +321,7 @@ class MitmMockProxyServer(
                 mode = mode,
                 status = status,
                 fixture = rule.fixture,
-                requestBody = requestBody,
+                requestBody = requestBody.bytes,
                 responseBody = body,
                 bodyMode = rule.bodyMode.scenarioValue,
                 delayMillis = rule.delayMillis,
@@ -336,7 +336,7 @@ class MitmMockProxyServer(
         private fun handlePassthrough(
             request: Request,
             ruleKey: RuleKey,
-            requestBody: String,
+            requestBody: CapturedRequestBody,
             scenarioSettings: ActiveScenarioSettings?,
             traffic: ProxyTrafficSettings,
         ): Response {
@@ -348,7 +348,7 @@ class MitmMockProxyServer(
                     mode = FORBIDDEN_MODE,
                     status = FORBIDDEN_RULE_STATUS,
                     fixture = null,
-                    requestBody = requestBody,
+                    requestBody = requestBody.bytes,
                     responseBody = body,
                     scenarioSettings = scenarioSettings,
                 )
@@ -368,7 +368,7 @@ class MitmMockProxyServer(
             )
             val response = executeUpstream(upstreamRequest, traffic.upstreamProxyUrl)
             val body = response.body ?: ByteArray(0)
-            journalRequest(request, ruleKey, PASSTHROUGH_MODE, response.statusCode, null, requestBody, body, null, upstreamRequest.uri.toString(), scenarioSettings = scenarioSettings)
+            journalRequest(request, ruleKey, PASSTHROUGH_MODE, response.statusCode, null, upstreamRequest.body ?: ByteArray(0), body, null, upstreamRequest.uri.toString(), scenarioSettings = scenarioSettings)
             return response
         }
 
@@ -378,7 +378,7 @@ class MitmMockProxyServer(
             mode: String,
             status: Int,
             fixture: String?,
-            requestBody: String,
+            requestBody: CapturedRequestBody,
             responseBody: ByteArray,
             scenarioSettings: ActiveScenarioSettings?,
             traffic: ProxyTrafficSettings,
@@ -406,7 +406,7 @@ class MitmMockProxyServer(
                             mirrorUri,
                             ruleKey.method,
                             headers,
-                            requestBody.toByteArray(),
+                            requestBody.bytes,
                         ),
                         upstreamProxyUrl,
                     )
@@ -536,7 +536,7 @@ class MitmMockProxyServer(
             mode: String,
             status: Int,
             fixture: String?,
-            requestBody: String,
+            requestBody: ByteArray,
             responseBody: ByteArray,
             upstreamUrl: String? = null,
             bodyMode: String? = null,
@@ -545,7 +545,7 @@ class MitmMockProxyServer(
             effectiveDelayMillis: Long? = null,
             scenarioSettings: ActiveScenarioSettings? = activeScenario.current(),
         ) {
-            val requestBodyFile = requestJournal.storeBody(stateDirectory, requestBody.toByteArray(), requestBodySuffix(mode))
+            val requestBodyFile = requestJournal.storeBody(stateDirectory, requestBody, requestBodySuffix(mode))
             val responseBodyFile = requestJournal.storeBody(stateDirectory, responseBody, responseBodySuffix(mode))
             val timestamp = clock()
             requestJournal.writeEvent(
