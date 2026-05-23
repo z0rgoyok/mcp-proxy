@@ -5,11 +5,20 @@
 .idea/
 *.iml
 
+# Local Codex workspace artifacts
+.codex/
+
 # Gradle / Kotlin
 .gradle/
 .kotlin/
 build/
 out/
+
+# Qodana local artifacts
+qodana-*.sit
+qodana-*.tar.gz
+qodana-results*/
+qodana-report*/
 
 # Local config and secrets
 .env

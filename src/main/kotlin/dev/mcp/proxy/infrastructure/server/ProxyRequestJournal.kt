@@ -5,6 +5,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -13,7 +14,10 @@ class ProxyRequestJournal(
         prettyPrint = false
         encodeDefaults = true
     },
+    private val retention: JournalRetention = JournalRetention(),
 ) {
+    private val eventCounter = AtomicInteger()
+
     fun journalFile(stateDirectory: Path): Path {
         return stateDirectory.resolve(JOURNAL_DIRECTORY).resolve(JOURNAL_FILE)
     }
@@ -28,6 +32,10 @@ class ProxyRequestJournal(
             StandardOpenOption.CREATE,
             StandardOpenOption.APPEND,
         )
+        val eventNumber = eventCounter.incrementAndGet()
+        if (retention.shouldRun(eventNumber)) {
+            retention.enforce(journalFile)
+        }
     }
 
     fun storeBody(
@@ -57,6 +65,8 @@ class ProxyRequestJournal(
         val fixture: String?,
         val requestBodyFile: String?,
         val responseBodyFile: String?,
+        val requestBodyBytes: Long? = null,
+        val responseBodyBytes: Long? = null,
         val bodyMode: String? = null,
         val delayMillis: Long? = null,
         val timeoutMillis: Long? = null,
@@ -66,7 +76,8 @@ class ProxyRequestJournal(
     companion object {
         const val JOURNAL_DIRECTORY = "journal"
         const val JOURNAL_FILE = "events.jsonl"
-        const val BODIES_DIRECTORY = "journal/bodies"
+        const val BODIES_DIRECTORY_NAME = "bodies"
+        const val BODIES_DIRECTORY = "$JOURNAL_DIRECTORY/$BODIES_DIRECTORY_NAME"
         val SKIPPED_UPSTREAM_HEADERS = setOf(
             HttpHeaders.Connection.lowercase(),
             HttpHeaders.ContentLength.lowercase(),

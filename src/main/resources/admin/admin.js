@@ -14,9 +14,25 @@ function escapeHtml(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function bodyLink(label, path) {
+function formatBytes(value) {
+  if (value === null || value === undefined) return "";
+  if (value < 1024) return `${value} B`;
+  const units = ["KiB", "MiB", "GiB"];
+  let size = value / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && size >= 1024; index += 1) {
+    size /= 1024;
+    unit = units[index];
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${unit}`;
+}
+
+function bodyLink(label, path, sizeBytes) {
   if (!path) return "";
-  return `<a href="${initialStatus.adminBasePath}/api/body?path=${encodeURIComponent(path)}" target="_blank" rel="noreferrer">${label}</a> `;
+  const size = formatBytes(sizeBytes);
+  const title = size ? `${path} (${size})` : path;
+  const text = size ? `${label} ${size}` : label;
+  return `<a href="${initialStatus.adminBasePath}/api/body?path=${encodeURIComponent(path)}" target="_blank" rel="noreferrer" title="${escapeHtml(title)}">${escapeHtml(text)}</a> `;
 }
 
 function basename(path) {
@@ -98,7 +114,7 @@ function renderJournal(items) {
       const request = `${item.method} ${item.path}`;
       const fixture = item.fixture || "";
       const network = networkDetails(item);
-      return `<tr><td class="col-time" title="${escapeHtml(item.timestamp)}">${escapeHtml(formatTime(item.timestamp))}</td><td class="col-mode">${escapeHtml(item.mode)}</td><td class="col-request" title="${escapeHtml(request)}"><span class="method">${escapeHtml(item.method)}</span>${escapeHtml(item.path)}</td><td class="col-status"><span class="status-badge ${statusClass(item.status)}">${escapeHtml(String(item.status))}</span></td><td class="col-fixture" title="${escapeHtml(fixture)}">${escapeHtml(fixture)}</td><td class="col-network" title="${escapeHtml(network)}">${escapeHtml(network)}</td><td class="col-bodies">${bodyLink("req", item.requestBodyFile)}${bodyLink("resp", item.responseBodyFile)}</td></tr>`;
+      return `<tr><td class="col-time" title="${escapeHtml(item.timestamp)}">${escapeHtml(formatTime(item.timestamp))}</td><td class="col-mode">${escapeHtml(item.mode)}</td><td class="col-request" title="${escapeHtml(request)}"><span class="method">${escapeHtml(item.method)}</span>${escapeHtml(item.path)}</td><td class="col-status"><span class="status-badge ${statusClass(item.status)}">${escapeHtml(String(item.status))}</span></td><td class="col-fixture" title="${escapeHtml(fixture)}">${escapeHtml(fixture)}</td><td class="col-network" title="${escapeHtml(network)}">${escapeHtml(network)}</td><td class="col-bodies">${bodyLink("req", item.requestBodyFile, item.requestBodyBytes)}${bodyLink("resp", item.responseBodyFile, item.responseBodyBytes)}</td></tr>`;
     }).join("")
     : `<tr><td colspan="7" class="muted">Journal is empty</td></tr>`;
 }

@@ -32,6 +32,8 @@ Use `scenario_enable` with `scenario`, `proxyPort`, `upstreamBaseUrl` and `state
 
 `var/state/runtime.json` is diagnostic persisted state. `var/state/journal/events.jsonl` contains request events. `var/state/kv/*.json` contains generic state store values.
 
+Journal body files are stored under `var/state/journal/bodies`. Runtime retention runs every 100 written events. The default policy keeps `events.jsonl` bounded at 16 MiB by rewriting the last 10,000 events, and keeps the newest 5,000 body files by file modification time. Cleanup affects only diagnostic runtime data under the active state directory.
+
 ## Logs
 
 Readable stdout logs include scenario, method, path, mode, status, fixture, upstream URL and journal body file references.
@@ -45,4 +47,4 @@ Example:
 
 ## Checks
 
-After Kotlin changes run Android Studio or IDEA inspections according to the repository instruction, then run `./gradlew --no-daemon test`. After launcher, Dockerfile or Compose changes also run `./gradlew --no-daemon installDist` and verify Docker/MCP startup.
+After Kotlin changes run Qodana according to the repository instruction, then run `./gradlew --no-daemon test`. After launcher, Dockerfile or Compose changes also run `./gradlew --no-daemon installDist` and verify Docker/MCP startup.

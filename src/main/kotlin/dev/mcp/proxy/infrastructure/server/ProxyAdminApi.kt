@@ -3,7 +3,8 @@ package dev.mcp.proxy.infrastructure.server
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.response.respondBytes
+import io.ktor.server.http.content.LocalPathContent
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import java.nio.file.Files
 import java.nio.file.Path
@@ -11,15 +12,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import dev.mcp.proxy.application.BoundedFileTailReader
+import dev.mcp.proxy.application.JournalTailLimit
 import dev.mcp.proxy.domain.scenario.ScenarioRepository
 import dev.mcp.proxy.infrastructure.runtime.PersistedRuntimeState
 
 class ProxyAdminApi(
     private val scenarioRepository: ScenarioRepository,
     private val json: Json,
+    private val tailReader: BoundedFileTailReader = BoundedFileTailReader(),
 ) {
     private val adminHtml = ProxyAdminHtml(json)
     private val stateStoreReader = StateStoreAdminReader()
+    private val bodyFileResolver = AdminBodyFileResolver()
 
     suspend fun respondDashboard(
         call: ApplicationCall,
@@ -49,13 +54,14 @@ class ProxyAdminApi(
     suspend fun respondJournal(
         call: ApplicationCall,
         stateDirectory: Path,
-        limit: Int,
+        limit: Int?,
     ) {
-        val items = readJournal(stateDirectory = stateDirectory, limit = limit)
+        val resolvedLimit = JournalTailLimit.normalize(limit, JournalTailLimit.ADMIN_DEFAULT)
+        val items = readJournal(stateDirectory = stateDirectory, limit = resolvedLimit)
         call.respondText(
             text = json.encodeToString(
                 AdminJournalResponse.serializer(),
-                AdminJournalResponse(limit = limit, count = items.size, items = items),
+                AdminJournalResponse(limit = resolvedLimit, count = items.size, items = items),
             ),
             contentType = ContentType.Application.Json,
             status = HttpStatusCode.OK,
@@ -82,21 +88,17 @@ class ProxyAdminApi(
         stateDirectory: Path,
         relativePath: String?,
     ) {
-        val requestedPath = relativePath?.takeIf(String::isNotBlank)
-        if (requestedPath == null) {
-            call.respondText("Body path is required", status = HttpStatusCode.BadRequest)
-            return
+        when (val bodyFile = bodyFileResolver.resolve(stateDirectory, relativePath)) {
+            AdminBodyFileResolver.Result.MissingPath -> {
+                call.respondText("Body path is required", status = HttpStatusCode.BadRequest)
+            }
+            AdminBodyFileResolver.Result.NotFound -> {
+                call.respondText("Body file not found", status = HttpStatusCode.NotFound)
+            }
+            is AdminBodyFileResolver.Result.Found -> {
+                call.respond(LocalPathContent(bodyFile.path, ContentType.Text.Plain))
+            }
         }
-        val resolved = stateDirectory.resolve(requestedPath).normalize()
-        if (!resolved.startsWith(stateDirectory.normalize()) || !Files.exists(resolved)) {
-            call.respondText("Body file not found", status = HttpStatusCode.NotFound)
-            return
-        }
-        call.respondBytes(
-            bytes = withContext(Dispatchers.IO) { Files.readAllBytes(resolved) },
-            contentType = ContentType.Text.Plain,
-            status = HttpStatusCode.OK,
-        )
     }
 
     suspend fun respondAsset(
@@ -147,11 +149,8 @@ class ProxyAdminApi(
         limit: Int,
     ): List<AdminJournalItem> {
         val journalFile = stateDirectory.resolve(JOURNAL_FILE)
-        if (!Files.exists(journalFile)) {
-            return emptyList()
-        }
-        return Files.readAllLines(journalFile)
-            .takeLast(limit)
+        return tailReader.readLastLines(journalFile, limit)
+            .filter(String::isNotBlank)
             .map { line -> json.decodeFromString<AdminJournalItem>(line) }
             .reversed()
     }
@@ -200,6 +199,8 @@ data class AdminJournalItem(
     val fixture: String?,
     val requestBodyFile: String?,
     val responseBodyFile: String?,
+    val requestBodyBytes: Long? = null,
+    val responseBodyBytes: Long? = null,
     val bodyMode: String? = null,
     val delayMillis: Long? = null,
     val timeoutMillis: Long? = null,

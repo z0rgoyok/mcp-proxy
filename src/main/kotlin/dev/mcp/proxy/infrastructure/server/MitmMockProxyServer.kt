@@ -20,6 +20,8 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request as OkHttpRequest
 import okhttp3.RequestBody.Companion.toRequestBody
+import dev.mcp.proxy.application.BoundedFileTailReader
+import dev.mcp.proxy.application.JournalTailLimit
 import dev.mcp.proxy.domain.ExternalNetworkPolicy
 import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
@@ -154,6 +156,8 @@ class MitmMockProxyServer(
         private val mirrorResponses = ConcurrentHashMap<String, ByteArray>()
         private val adminHtml = ProxyAdminHtml(json)
         private val stateStoreReader = StateStoreAdminReader()
+        private val tailReader = BoundedFileTailReader()
+        private val bodyFileResolver = AdminBodyFileResolver()
         private val requestState = AtomicReference(ScenarioRequestState())
 
         fun activateScenario(settings: ActiveScenarioSettings) {
@@ -189,6 +193,9 @@ class MitmMockProxyServer(
             ruleKey: RuleKey,
         ): Response? {
             if (ruleKey.method != "GET") return null
+            if (ruleKey.path == "${ProxyAdminApi.ADMIN_BASE_PATH}/api/body") {
+                return adminBodyResponse(request)
+            }
             val body = when (ruleKey.path) {
                 ProxyAdminApi.ADMIN_BASE_PATH -> adminHtml.render(buildAdminStatus()).toByteArray()
                 "${ProxyAdminApi.ADMIN_BASE_PATH}/assets/admin.css" -> adminResource("admin.css") ?: return notFound(request)
@@ -196,7 +203,6 @@ class MitmMockProxyServer(
                 "${ProxyAdminApi.ADMIN_BASE_PATH}/api/status" -> json.encodeToString(AdminStatusResponse.serializer(), buildAdminStatus()).toByteArray()
                 "${ProxyAdminApi.ADMIN_BASE_PATH}/api/state" -> json.encodeToString(AdminStateResponse.serializer(), buildAdminState()).toByteArray()
                 "${ProxyAdminApi.ADMIN_BASE_PATH}/api/journal" -> json.encodeToString(AdminJournalResponse.serializer(), buildAdminJournal(request)).toByteArray()
-                "${ProxyAdminApi.ADMIN_BASE_PATH}/api/body" -> adminBody(request) ?: return notFound(request)
                 else -> return null
             }
             return Response(request, 200, adminHeaders(ruleKey.path, body.size), body)
@@ -228,34 +234,43 @@ class MitmMockProxyServer(
         }
 
         private fun buildAdminJournal(request: Request): AdminJournalResponse {
-            val limit = request.uri.rawQuery
-                ?.split("&")
-                ?.firstOrNull { parameter -> parameter.startsWith("limit=") }
-                ?.substringAfter("=")
-                ?.toIntOrNull()
-                ?: DEFAULT_ADMIN_LIMIT
-            val journalItems = readIfExists(stateDirectory.resolve(JOURNAL_FILE))
-                ?.lineSequence()
-                ?.filter(String::isNotBlank)
-                ?.toList()
-                ?.takeLast(limit)
-                ?.map { line -> json.decodeFromString<AdminJournalItem>(line) }
-                ?.reversed()
-                .orEmpty()
+            val limit = JournalTailLimit.normalize(
+                request.uri.rawQuery
+                    ?.split("&")
+                    ?.firstOrNull { parameter -> parameter.startsWith("limit=") }
+                    ?.substringAfter("=")
+                    ?.toIntOrNull(),
+                JournalTailLimit.ADMIN_DEFAULT,
+            )
+            val journalItems = tailReader.readLastLines(stateDirectory.resolve(JOURNAL_FILE), limit)
+                .filter(String::isNotBlank)
+                .map { line -> json.decodeFromString<AdminJournalItem>(line) }
+                .reversed()
             return AdminJournalResponse(limit = limit, count = journalItems.size, items = journalItems)
         }
 
-        private fun adminBody(request: Request): ByteArray? {
+        private fun adminBodyResponse(request: Request): Response {
             val requestedPath = request.uri.rawQuery
                 ?.split("&")
                 ?.firstOrNull { parameter -> parameter.startsWith("path=") }
                 ?.substringAfter("=")
                 ?.let { java.net.URLDecoder.decode(it, Charsets.UTF_8) }
-                ?.takeIf(String::isNotBlank)
-                ?: return null
-            val resolved = stateDirectory.resolve(requestedPath).normalize()
-            if (!resolved.startsWith(stateDirectory.normalize()) || !Files.exists(resolved)) return null
-            return Files.readAllBytes(resolved)
+            return when (val bodyFile = bodyFileResolver.resolve(stateDirectory, requestedPath)) {
+                AdminBodyFileResolver.Result.MissingPath -> textResponse(request, 400, "Body path is required")
+                AdminBodyFileResolver.Result.NotFound -> notFound(request)
+                is AdminBodyFileResolver.Result.Found -> {
+                    if (bodyFile.sizeBytes > MAX_MITM_ADMIN_BODY_BYTES) {
+                        textResponse(
+                            request = request,
+                            statusCode = 413,
+                            body = "Body file is too large for MITM inline admin response: ${bodyFile.sizeBytes} bytes",
+                        )
+                    } else {
+                        val body = Files.readAllBytes(bodyFile.path)
+                        Response(request, 200, adminHeaders("${ProxyAdminApi.ADMIN_BASE_PATH}/api/body", body.size), body)
+                    }
+                }
+            }
         }
 
         private fun adminResource(assetPath: String): ByteArray? {
@@ -281,8 +296,16 @@ class MitmMockProxyServer(
         }
 
         private fun notFound(request: Request): Response {
-            val body = "Not found".toByteArray()
-            return Response(request, 404, mapOf("content-type" to "text/plain", "content-length" to body.size.toString()), body)
+            return textResponse(request, 404, "Not found")
+        }
+
+        private fun textResponse(
+            request: Request,
+            statusCode: Int,
+            body: String,
+        ): Response {
+            val bytes = body.toByteArray()
+            return Response(request, statusCode, mapOf("content-type" to "text/plain", "content-length" to bytes.size.toString()), bytes)
         }
 
         private fun handleMirror(
@@ -561,6 +584,8 @@ class MitmMockProxyServer(
                     fixture = fixture,
                     requestBodyFile = requestBodyFile,
                     responseBodyFile = responseBodyFile,
+                    requestBodyBytes = requestBody.size.toLong(),
+                    responseBodyBytes = responseBody.size.toLong(),
                     bodyMode = bodyMode,
                     delayMillis = delayMillis,
                     timeoutMillis = timeoutMillis,
@@ -603,9 +628,9 @@ class MitmMockProxyServer(
         const val FORBIDDEN_RULE_STATUS = 599
         const val MIRROR_PATH = "/__proxy_mirror"
         const val MIRROR_ID_HEADER = "x-proxy-mirror-id"
-        const val DEFAULT_ADMIN_LIMIT = 50
         const val RUNTIME_FILE = "runtime.json"
         const val JOURNAL_FILE = "journal/events.jsonl"
+        const val MAX_MITM_ADMIN_BODY_BYTES = 1_048_576L
     }
 }
 

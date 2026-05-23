@@ -1,22 +1,17 @@
 package dev.mcp.proxy.application
 
-import java.nio.file.Files
 import java.nio.file.Path
 
-class ReadJournalTailUseCase {
+class ReadJournalTailUseCase(
+    private val tailReader: BoundedFileTailReader = BoundedFileTailReader(),
+) {
     fun execute(
         stateDirectory: Path?,
         limit: Int?,
     ): List<String> {
         val resolvedStateDirectory = (stateDirectory ?: Path.of("var/state")).toAbsolutePath().normalize()
         val journalFile = resolvedStateDirectory.resolve("journal/events.jsonl")
-        if (!Files.exists(journalFile)) {
-            return emptyList()
-        }
-        return Files.readAllLines(journalFile).takeLast(limit ?: DEFAULT_LIMIT)
-    }
-
-    private companion object {
-        const val DEFAULT_LIMIT = 20
+        val resolvedLimit = JournalTailLimit.normalize(limit, JournalTailLimit.MCP_DEFAULT)
+        return tailReader.readLastLines(journalFile, resolvedLimit)
     }
 }
