@@ -38,6 +38,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -93,7 +94,10 @@ class MockProxyServerTest {
 
             assertEquals(200, response.statusCode())
             assertEquals("""{"status":"mock"}""", response.body())
-            assertContains(stateDirectory.resolve("journal/events.jsonl").toFile().readText(), """"mode":"mock"""")
+            val journal = stateDirectory.resolve("journal/events.jsonl").toFile().readText()
+            assertContains(journal, """"mode":"mock"""")
+            assertContains(journal, """"requestBodyBytes":0""")
+            assertContains(journal, """"responseBodyBytes":${response.body().length}""")
             assert(stateDirectory.resolve("journal/bodies").toFile().listFiles().orEmpty().isNotEmpty())
             assertIs<ProxyLogEvent.Started>(eventLogger.events[0])
             val requestLog = assertIs<ProxyLogEvent.RequestHandled>(eventLogger.events[1])
@@ -938,7 +942,11 @@ class MockProxyServerTest {
         Files.createDirectories(stateDirectory.resolve("journal"))
         Files.writeString(
             stateDirectory.resolve("journal/events.jsonl"),
-            """{"timestamp":"2026-04-28T09:00:00Z","method":"POST","path":"/v1/resource","uri":"/v1/resource","scenario":"demo","mode":"mock","status":200,"fixture":"resource.json","requestBodyFile":"journal/bodies/request.json","responseBodyFile":null}""" + "\n",
+            listOf(
+                """{"timestamp":"2026-04-28T08:58:00Z","method":"GET","path":"/v1/old","uri":"/v1/old","scenario":"demo","mode":"mock","status":200,"fixture":"old.json","requestBodyFile":null,"responseBodyFile":null}""",
+                """{"timestamp":"2026-04-28T08:59:00Z","method":"GET","path":"/v1/middle","uri":"/v1/middle","scenario":"demo","mode":"mock","status":200,"fixture":"middle.json","requestBodyFile":null,"responseBodyFile":null}""",
+                """{"timestamp":"2026-04-28T09:00:00Z","method":"POST","path":"/v1/resource","uri":"/v1/resource","scenario":"demo","mode":"mock","status":200,"fixture":"resource.json","requestBodyFile":"journal/bodies/request.json","responseBodyFile":null}""",
+            ).joinToString(separator = "\n", postfix = "\n"),
         )
         val proxy = MockProxyServer(
             scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap(), scenarios = listOf("demo", "profile")),
@@ -955,7 +963,7 @@ class MockProxyServerTest {
             val html = get("http://127.0.0.1:$proxyPort/admin")
             val status = get("http://127.0.0.1:$proxyPort/admin/api/status")
             val state = get("http://127.0.0.1:$proxyPort/admin/api/state")
-            val journal = get("http://127.0.0.1:$proxyPort/admin/api/journal?limit=10")
+            val journal = get("http://127.0.0.1:$proxyPort/admin/api/journal?limit=1")
             val body = get("http://127.0.0.1:$proxyPort/admin/api/body?path=journal/bodies/request.json")
 
             assertEquals(200, html.statusCode())
@@ -965,10 +973,42 @@ class MockProxyServerTest {
             assertContains(status.body(), """"availableScenarios":["demo","profile"]""")
             assertContains(state.body(), """"key":"session"""")
             assertContains(state.body(), """"rawJson":"{\"screen\":\"dashboard\"}"""")
+            assertContains(journal.body(), """"limit":1""")
+            assertContains(journal.body(), """"count":1""")
             assertContains(journal.body(), """"mode":"mock"""")
+            assertContains(journal.body(), """"path":"/v1/resource"""")
+            assertFalse(journal.body().contains("/v1/middle"))
+            assertEquals("""{"ping":"request"}""".length.toLong(), body.headers().firstValueAsLong("content-length").orElse(-1))
             assertEquals("""{"ping":"request"}""", body.body())
         } finally {
             proxy.stop(gracePeriodMillis = 0, timeoutMillis = 0)
+        }
+    }
+
+    @Test
+    fun `mitm admin body refuses large inline body file`() = runTest {
+        val proxyPort = freePort()
+        val stateDirectory = createTempDirectory()
+        Files.createDirectories(stateDirectory.resolve("journal/bodies"))
+        Files.write(stateDirectory.resolve("journal/bodies/large.bin"), ByteArray(1_048_577) { 1 })
+        val proxy = MitmMockProxyServer(
+            scenarioRepository = InMemoryScenarioRepository(fixtures = emptyMap()),
+            eventLogger = RecordingProxyEventLogger(),
+            clock = { fixedTime },
+        ).start(
+            activeScenario = null,
+            proxyPort = ProxyPort(proxyPort),
+            upstreamBaseUrl = UpstreamBaseUrl("http://127.0.0.1:${freePort()}"),
+            stateDirectory = stateDirectory,
+        )
+
+        try {
+            val body = get("http://127.0.0.1:$proxyPort/admin/api/body?path=journal/bodies/large.bin")
+
+            assertEquals(413, body.statusCode())
+            assertContains(body.body(), "Body file is too large")
+        } finally {
+            proxy.stop()
         }
     }
 

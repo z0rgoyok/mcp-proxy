@@ -1,3 +1,4 @@
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 
 plugins {
@@ -8,6 +9,12 @@ plugins {
 
 extensions.configure<KotlinJvmProjectExtension> {
     jvmToolchain(17)
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
 }
 
 dependencies {

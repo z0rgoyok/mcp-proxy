@@ -70,7 +70,7 @@ class MockProxyServer(
                 get("${ProxyAdminApi.ADMIN_BASE_PATH}/api/status") { adminApi.respondStatus(call, stateDirectory, proxyPort.value) }
                 get("${ProxyAdminApi.ADMIN_BASE_PATH}/api/state") { adminApi.respondState(call, stateDirectory) }
                 get("${ProxyAdminApi.ADMIN_BASE_PATH}/api/journal") {
-                    val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: DEFAULT_ADMIN_LIMIT
+                    val limit = call.request.queryParameters["limit"]?.toIntOrNull()
                     adminApi.respondJournal(call, stateDirectory, limit)
                 }
                 get("${ProxyAdminApi.ADMIN_BASE_PATH}/api/body") {
@@ -225,6 +225,8 @@ class MockProxyServer(
                 fixture = fixture,
                 requestBodyFile = requestBodyFile,
                 responseBodyFile = responseBodyFile,
+                requestBodyBytes = requestBody.size.toLong(),
+                responseBodyBytes = responseBody.size.toLong(),
                 bodyMode = bodyMode,
                 delayMillis = delayMillis,
                 timeoutMillis = timeoutMillis,
@@ -334,7 +336,6 @@ class MockProxyServer(
 
     companion object {
         private const val BIND_HOST = "0.0.0.0"
-        private const val DEFAULT_ADMIN_LIMIT = 50
         private const val PASSTHROUGH_MODE = "passthrough"
         private const val FORBIDDEN_RULE_STATUS = 599
         private const val CONNECT_METHOD = "CONNECT"

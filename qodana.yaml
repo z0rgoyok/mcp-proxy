@@ -1,0 +1,11 @@
+version: "1.0"
+linter: qodana-jvm-community
+projectJDK: "17"
+withinDocker: false
+profile:
+  name: qodana.recommended
+exclude:
+  - name: All
+    paths:
+      - build
+      - .gradle
