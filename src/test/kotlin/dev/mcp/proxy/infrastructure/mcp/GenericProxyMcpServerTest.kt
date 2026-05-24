@@ -65,6 +65,33 @@ class GenericProxyMcpServerTest {
     }
 
     @Test
+    fun `journal tail returns request headers from raw journal events`() {
+        val stateDirectory = createTempDirectory()
+        val journalFile = stateDirectory.resolve("journal/events.jsonl")
+        Files.createDirectories(journalFile.parent)
+        Files.writeString(
+            journalFile,
+            """{"timestamp":"2026-04-28T09:00:00Z","method":"POST","path":"/buyer/v2/promocode","uri":"/buyer/v2/promocode","scenario":"demo","mode":"mock","status":200,"fixture":"promocode.json","requestBodyFile":null,"responseBodyFile":null,"requestHeaders":{"X-city":["3"],"Authorization":["[REDACTED]"]}}""" + "\n",
+        )
+        val server = mcpServer()
+
+        val response = assertNotNull(
+            server.handle(
+                toolCall(
+                    id = 1,
+                    name = "journal_tail",
+                    arguments = """{"stateDirectory":"$stateDirectory","limit":1}""",
+                ),
+            ),
+        )
+
+        assertContains(response, "requestHeaders")
+        assertContains(response, "X-city")
+        assertContains(response, "3")
+        assertContains(response, "[REDACTED]")
+    }
+
+    @Test
     fun `proxy start and status keep runtime in mcp server`() {
         val root = createScenarioRoot()
         val stateDirectory = createTempDirectory()

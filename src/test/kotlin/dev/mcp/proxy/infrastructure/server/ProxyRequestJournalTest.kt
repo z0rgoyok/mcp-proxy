@@ -10,6 +10,29 @@ import kotlin.test.assertTrue
 
 class ProxyRequestJournalTest {
     @Test
+    fun `redacts sensitive request headers and keeps diagnostic headers`() {
+        val journal = ProxyRequestJournal()
+
+        val headers = journal.redactRequestHeaders(
+            linkedMapOf(
+                "X-city" to "3",
+                "X-Pfm" to "1111",
+                "X-Delivery-Type" to "store:1111",
+                "Authorization" to "Bearer secret",
+                "X-Api-Key" to "api-secret",
+                "Cookie" to "sid=secret",
+            ),
+        )
+
+        assertEquals(listOf("3"), headers.getValue("X-city"))
+        assertEquals(listOf("1111"), headers.getValue("X-Pfm"))
+        assertEquals(listOf("store:1111"), headers.getValue("X-Delivery-Type"))
+        assertEquals(listOf("[REDACTED]"), headers.getValue("Authorization"))
+        assertEquals(listOf("[REDACTED]"), headers.getValue("X-Api-Key"))
+        assertEquals(listOf("[REDACTED]"), headers.getValue("Cookie"))
+    }
+
+    @Test
     fun `retention trims journal to last events when file is too large`() {
         val stateDirectory = createTempDirectory()
         val retention = JournalRetention(

@@ -17,6 +17,7 @@ out/
 # Qodana local artifacts
 qodana-*.sit
 qodana-*.tar.gz
+qodana-QDJVMC-*/
 qodana-results*/
 qodana-report*/
 
@@ -29,6 +30,12 @@ local.properties
 # Runtime state
 var/*
 !var/.gitkeep
+
+# Local project mocks
+fixtures/*
+!fixtures/.gitkeep
+scenarios/*
+!scenarios/.gitkeep
 
 # Temporary work
 tmp/

@@ -67,13 +67,44 @@ class ProxyRequestJournal(
         val responseBodyFile: String?,
         val requestBodyBytes: Long? = null,
         val responseBodyBytes: Long? = null,
+        val requestHeaders: Map<String, List<String>> = emptyMap(),
         val bodyMode: String? = null,
         val delayMillis: Long? = null,
         val timeoutMillis: Long? = null,
         val effectiveDelayMillis: Long? = null,
     )
 
+    fun redactRequestHeaders(headers: Set<Map.Entry<String, List<String>>>): Map<String, List<String>> {
+        return headers.associate { (name, values) ->
+            name to redactHeaderValues(name, values)
+        }
+    }
+
+    fun redactRequestHeaders(headers: Map<String, String>): Map<String, List<String>> {
+        return headers.mapValues { (name, value) ->
+            redactHeaderValues(name, listOf(value))
+        }
+    }
+
+    private fun redactHeaderValues(name: String, values: List<String>): List<String> {
+        return if (isSensitiveHeader(name)) {
+            values.map { REDACTED_HEADER_VALUE }
+        } else {
+            values
+        }
+    }
+
     companion object {
+        private const val REDACTED_HEADER_VALUE = "[REDACTED]"
+        private val SENSITIVE_HEADER_NAME_FRAGMENTS = listOf(
+            "authorization",
+            "api-key",
+            "apikey",
+            "api_key",
+            "cookie",
+            "secret",
+            "token",
+        )
         const val JOURNAL_DIRECTORY = "journal"
         const val JOURNAL_FILE = "events.jsonl"
         const val BODIES_DIRECTORY_NAME = "bodies"
@@ -85,5 +116,10 @@ class ProxyRequestJournal(
             HttpHeaders.TransferEncoding.lowercase(),
             HttpHeaders.Upgrade.lowercase(),
         )
+
+        private fun isSensitiveHeader(name: String): Boolean {
+            val normalized = name.lowercase()
+            return SENSITIVE_HEADER_NAME_FRAGMENTS.any(normalized::contains)
+        }
     }
 }

@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.milliseconds
 import dev.mcp.proxy.domain.ProxyPort
 import dev.mcp.proxy.domain.UpstreamBaseUrl
 import dev.mcp.proxy.domain.scenario.MockRule
@@ -155,7 +156,7 @@ class MockProxyServer(
             timeoutMillis = rule.timeoutMillis,
             effectiveDelayMillis = rule.responseDelayMillis,
         )
-        if (rule.responseDelayMillis > 0) delay(rule.responseDelayMillis)
+        if (rule.responseDelayMillis > 0) delay(rule.responseDelayMillis.milliseconds)
         context.respondRuleResponse(responseBody, status, rule.bodyMode)
         return Unit
     }
@@ -227,6 +228,7 @@ class MockProxyServer(
                 responseBodyFile = responseBodyFile,
                 requestBodyBytes = requestBody.size.toLong(),
                 responseBodyBytes = responseBody.size.toLong(),
+                requestHeaders = requestJournal.redactRequestHeaders(call.request.headers.entries()),
                 bodyMode = bodyMode,
                 delayMillis = delayMillis,
                 timeoutMillis = timeoutMillis,

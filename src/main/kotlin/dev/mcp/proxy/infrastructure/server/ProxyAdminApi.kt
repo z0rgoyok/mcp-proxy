@@ -201,6 +201,7 @@ data class AdminJournalItem(
     val responseBodyFile: String?,
     val requestBodyBytes: Long? = null,
     val responseBodyBytes: Long? = null,
+    val requestHeaders: Map<String, List<String>> = emptyMap(),
     val bodyMode: String? = null,
     val delayMillis: Long? = null,
     val timeoutMillis: Long? = null,

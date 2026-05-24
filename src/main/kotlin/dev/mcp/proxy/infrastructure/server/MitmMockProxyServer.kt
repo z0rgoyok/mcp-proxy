@@ -586,6 +586,7 @@ class MitmMockProxyServer(
                     responseBodyFile = responseBodyFile,
                     requestBodyBytes = requestBody.size.toLong(),
                     responseBodyBytes = responseBody.size.toLong(),
+                    requestHeaders = requestJournal.redactRequestHeaders(request.headers),
                     bodyMode = bodyMode,
                     delayMillis = delayMillis,
                     timeoutMillis = timeoutMillis,
