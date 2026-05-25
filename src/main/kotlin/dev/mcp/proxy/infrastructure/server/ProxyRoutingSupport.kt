@@ -4,6 +4,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.Serializable
 import dev.mcp.proxy.domain.scenario.MockRule
+import dev.mcp.proxy.domain.scenario.MockRuleRequestBodyJsonRoot
 
 data class RuleKey(
     val method: String,
@@ -92,7 +93,18 @@ private fun String.isPathVariable(): Boolean {
 }
 
 private fun MockRule.matchesRequestBody(requestBody: String): Boolean {
-    return requestBodyContains.all(requestBody::contains)
+    return requestBodyContains.all(requestBody::contains) &&
+            requestBodyJsonRoot.matchesRequestBodyJsonRoot(requestBody)
+}
+
+private fun MockRuleRequestBodyJsonRoot?.matchesRequestBodyJsonRoot(requestBody: String): Boolean {
+    return when (this) {
+        null -> true
+        MockRuleRequestBodyJsonRoot.Array -> requestBody.trimStart().firstOrNull() == JSON_ARRAY_START
+        MockRuleRequestBodyJsonRoot.Object -> requestBody.trimStart().firstOrNull() == JSON_OBJECT_START
+    }
 }
 
 private val METHODS_REQUIRING_REQUEST_BODY = setOf("POST", "PUT", "PATCH")
+private const val JSON_ARRAY_START = '['
+private const val JSON_OBJECT_START = '{'

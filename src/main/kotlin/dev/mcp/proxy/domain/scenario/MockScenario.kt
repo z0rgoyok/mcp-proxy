@@ -16,6 +16,7 @@ data class MockRule(
     val mode: MockRuleMode = MockRuleMode.Mock,
     val sequence: Int? = null,
     val requestBodyContains: List<String> = emptyList(),
+    val requestBodyJsonRoot: MockRuleRequestBodyJsonRoot? = null,
     val status: Int = SUCCESS_STATUS,
     val delayMillis: Long = NO_DELAY_MILLIS,
     val timeoutMillis: Long? = null,
@@ -29,6 +30,15 @@ data class MockRule(
         const val SUCCESS_STATUS = 200
         const val NO_DELAY_MILLIS = 0L
     }
+}
+
+@Serializable
+enum class MockRuleRequestBodyJsonRoot {
+    @SerialName("array")
+    Array,
+
+    @SerialName("object")
+    Object,
 }
 
 @Serializable

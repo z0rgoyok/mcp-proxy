@@ -11,6 +11,7 @@ import dev.mcp.proxy.domain.scenario.ScenarioRepository
 class FileScenarioRepository(
     private val rootDirectory: Path,
     private val json: Json,
+    private val fixtureTemplateRenderer: FixtureTemplateRenderer = FixtureTemplateRenderer(),
 ) : ScenarioRepository {
 
     override fun list(): List<ScenarioName> {
@@ -54,7 +55,10 @@ class FileScenarioRepository(
         check(Files.exists(fixtureFile)) {
             "Fixture file not found: $fixtureFile"
         }
-        return Files.readString(fixtureFile)
+        return fixtureTemplateRenderer.render(
+            fixtureName = fixture,
+            content = Files.readString(fixtureFile),
+        )
     }
 
     private companion object {
