@@ -64,7 +64,7 @@ A rule maps method and path to a fixture:
 ```
 
 Rules support `status`, `delayMillis`, `timeoutMillis` and `bodyMode` (`fixture`, `empty`, `connectionClose`).
-Fixture bodies support the `{{today}}` token, rendered as the proxy host current ISO date (`yyyy-MM-dd`).
+Fixture bodies support the `{{today}}` and `{{tomorrow}}` tokens, rendered from the proxy host current ISO date (`yyyy-MM-dd`).
 Unknown or malformed `{{...}}` tokens fail fast when the fixture is loaded.
 
 Advanced rules also support:
