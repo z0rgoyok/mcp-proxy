@@ -101,10 +101,37 @@ class FileScenarioRepositoryTest {
     }
 
     @Test
+    fun `renders today and tomorrow tokens in fixture response`() {
+        val root = createTempDirectory()
+        Files.createDirectories(root.resolve("fixtures/delivery"))
+        Files.writeString(
+            root.resolve("fixtures/delivery/calc.json"),
+            """{"deliveryDate":[{"date":"{{today}}"},{"date":"{{tomorrow}}"}]}""",
+        )
+        val repository = FileScenarioRepository(
+            rootDirectory = root,
+            json = json,
+            fixtureTemplateRenderer = FixtureTemplateRenderer(
+                clock = Clock.fixed(Instant.parse("2026-05-25T10:15:30Z"), ZoneOffset.UTC),
+            ),
+        )
+
+        val fixture = repository.loadFixture(
+            MockRule(
+                method = "POST",
+                path = "/buyer/v1/order/delivery/calc/combined",
+                fixture = "delivery/calc.json",
+            ),
+        )
+
+        assertEquals("""{"deliveryDate":[{"date":"2026-05-25"},{"date":"2026-05-26"}]}""", fixture)
+    }
+
+    @Test
     fun `rejects unknown fixture template token`() {
         val root = createTempDirectory()
         Files.createDirectories(root.resolve("fixtures"))
-        Files.writeString(root.resolve("fixtures/unknown.json"), """{"date":"{{tomorrow}}"}""")
+        Files.writeString(root.resolve("fixtures/unknown.json"), """{"date":"{{nextWeek}}"}""")
         val repository = FileScenarioRepository(rootDirectory = root, json = json)
 
         val error = assertFailsWith<IllegalStateException> {
@@ -117,6 +144,6 @@ class FileScenarioRepositoryTest {
             )
         }
 
-        assertEquals("Unsupported fixture template token(s) in unknown.json: tomorrow", error.message)
+        assertEquals("Unsupported fixture template token(s) in unknown.json: nextWeek", error.message)
     }
 }

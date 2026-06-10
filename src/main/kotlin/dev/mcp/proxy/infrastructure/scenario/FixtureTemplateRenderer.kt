@@ -10,7 +10,11 @@ class FixtureTemplateRenderer(
         fixtureName: String,
         content: String,
     ): String {
-        val values = mapOf(TODAY_TOKEN to LocalDate.now(clock).toString())
+        val today = LocalDate.now(clock)
+        val values = mapOf(
+            TODAY_TOKEN to today.toString(),
+            TOMORROW_TOKEN to today.plusDays(1).toString(),
+        )
         val unknownTokens = TEMPLATE_TOKEN_REGEX.findAll(content)
             .map { match -> match.groupValues[1] }
             .filter { token -> token !in values }
@@ -31,6 +35,7 @@ class FixtureTemplateRenderer(
 
     private companion object {
         const val TODAY_TOKEN = "today"
+        const val TOMORROW_TOKEN = "tomorrow"
         const val UNRESOLVED_TEMPLATE_START = "{{"
         const val UNRESOLVED_TEMPLATE_END = "}}"
         val TEMPLATE_TOKEN_REGEX = Regex("""\{\{\s*([A-Za-z0-9_.-]+)\s*}}""")
